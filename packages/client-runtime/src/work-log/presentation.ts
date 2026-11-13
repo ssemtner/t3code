@@ -658,6 +658,11 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "project-clone":
     case "environment-update":
     case "theme-set":
+    case "machines-receive":
+    case "machines-undo":
+    case "machines-plan-propose":
+    case "machines-plan-execute":
+    case "machines-plan-undo":
     case "attachment-prepare":
     case "attachment-discard":
     case "attachment-send":

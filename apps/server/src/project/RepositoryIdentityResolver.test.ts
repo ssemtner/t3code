@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { repositoryGroupingDisplayNameOf, repositoryGroupingKeyOf } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -32,6 +34,43 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
       args: ["-C", cwd, ...args],
     });
   }).pipe(Effect.provide(ProcessRunner.layer));
+
+const commit = (cwd: string, message: string) =>
+  git(cwd, [
+    "-c",
+    "user.name=T3",
+    "-c",
+    "user.email=t3@example.test",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "--allow-empty",
+    "-q",
+    "-m",
+    message,
+  ]);
+
+/** A repository with history, and clones of it whose remotes point wherever a test says. */
+const makeHistory = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const source = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-repository-history-" });
+  yield* git(source, ["init", "-q"]);
+  yield* commit(source, "first");
+  yield* commit(source, "second");
+  const rootCommit = (yield* git(source, ["rev-list", "--max-parents=0", "HEAD"])).stdout.trim();
+  const clone = (remotes: ReadonlyArray<readonly [string, string]>, cloneArgs: string[] = []) =>
+    Effect.gen(function* () {
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-repository-clone-" });
+      // A file URL, as a plain path ignores --depth.
+      yield* git(source, ["clone", "-q", ...cloneArgs, NodeURL.pathToFileURL(source).href, cwd]);
+      yield* git(cwd, ["remote", "remove", "origin"]);
+      for (const [name, url] of remotes) yield* git(cwd, ["remote", "add", name, url]);
+      // Set locally so a developer's global setting cannot change the outcome.
+      yield* git(cwd, ["config", "t3code.groupByHistory", "true"]);
+      return cwd;
+    });
+  return { rootCommit, clone };
+});
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
@@ -514,6 +553,112 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.displayName).toBe("T3Tools/platform/t3code");
       expect(identity?.owner).toBe("T3Tools");
       expect(identity?.name).toBe("t3code");
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("groups clones of one repository fetched through different remotes by history", () =>
+    Effect.gen(function* () {
+      const { rootCommit, clone } = yield* makeHistory;
+      const team = "git@github.com:theholycows/1538_2026_Offseason_Rust.git";
+      const personal = "git@github.com:ssemtner/1538_2026_Offseason_Rust.git";
+      const laptop = yield* clone([
+        ["personal", personal],
+        ["origin", team],
+      ]);
+      const desktop = yield* clone([["origin", personal]]);
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+
+      yield* git(laptop, ["config", "t3code.groupByHistory", "false"]);
+      const remoteGrouped = yield* resolver.resolve(laptop);
+      expect(remoteGrouped?.origin).toBeUndefined();
+
+      yield* git(laptop, ["config", "t3code.groupByHistory", "true"]);
+      const laptopIdentity = yield* resolver.resolve(laptop, { refresh: true });
+      const desktopIdentity = yield* resolver.resolve(desktop);
+      expect(laptopIdentity).toEqual({ ...remoteGrouped, origin: laptopIdentity?.origin });
+      expect(laptopIdentity?.canonicalKey).toBe("github.com/theholycows/1538_2026_offseason_rust");
+      expect(laptopIdentity?.locator.remoteUrl).toBe(team);
+      expect(desktopIdentity?.canonicalKey).toBe("github.com/ssemtner/1538_2026_offseason_rust");
+      expect(desktopIdentity?.owner).toBe("ssemtner");
+      expect(desktopIdentity?.name).toBe("1538_2026_Offseason_Rust");
+      expect(repositoryGroupingKeyOf(laptopIdentity!)).toBe(`git-root:${rootCommit}`);
+      expect(repositoryGroupingKeyOf(desktopIdentity!)).toBe(`git-root:${rootCommit}`);
+      expect(repositoryGroupingDisplayNameOf(laptopIdentity!)).toBe(
+        "theholycows/1538_2026_Offseason_Rust",
+      );
+      expect(repositoryGroupingDisplayNameOf(desktopIdentity!)).toBe(
+        "ssemtner/1538_2026_Offseason_Rust",
+      );
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("keeps a fork's own origin as the clone source when grouping by history", () =>
+    Effect.gen(function* () {
+      const { rootCommit, clone } = yield* makeHistory;
+      const cwd = yield* clone([
+        ["origin", "git@github.com:julius/t3code-fork.git"],
+        ["upstream", "git@github.com:T3Tools/t3code.git"],
+      ]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(cwd);
+
+      expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(identity?.origin).toEqual({
+        canonicalKey: `git-root:${rootCommit}`,
+        remoteUrl: "git@github.com:julius/t3code-fork.git",
+        displayName: "julius/t3code-fork",
+      });
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("groups by the mainline root when another history was merged in", () =>
+    Effect.gen(function* () {
+      const { rootCommit, clone } = yield* makeHistory;
+      const remotes = [["origin", "git@github.com:T3Tools/t3code.git"]] as const;
+      const merged = yield* clone(remotes);
+      const plain = yield* clone(remotes);
+      const branch = (yield* git(merged, ["symbolic-ref", "--short", "HEAD"])).stdout.trim();
+      yield* git(merged, ["checkout", "-q", "--orphan", "imported"]);
+      yield* commit(merged, "imported root");
+      yield* git(merged, ["checkout", "-q", branch]);
+      yield* git(merged, [
+        "-c",
+        "user.name=T3",
+        "-c",
+        "user.email=t3@example.test",
+        "-c",
+        "commit.gpgsign=false",
+        "merge",
+        "-q",
+        "--no-edit",
+        "--allow-unrelated-histories",
+        "imported",
+      ]);
+      const roots = yield* git(merged, ["rev-list", "--max-parents=0", "HEAD"]);
+      expect(roots.stdout.trim().split("\n")).toHaveLength(2);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      expect((yield* resolver.resolve(merged))?.origin?.canonicalKey).toBe(
+        `git-root:${rootCommit}`,
+      );
+      expect((yield* resolver.resolve(plain))?.origin?.canonicalKey).toBe(`git-root:${rootCommit}`);
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
+  it.effect("keeps grouping by remote for a shallow clone, whose root is unknown", () =>
+    Effect.gen(function* () {
+      const { clone } = yield* makeHistory;
+      const cwd = yield* clone([["origin", "git@github.com:T3Tools/t3code.git"]], ["--depth", "1"]);
+      expect((yield* git(cwd, ["rev-parse", "--is-shallow-repository"])).stdout.trim()).toBe(
+        "true",
+      );
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(cwd);
+
+      expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(identity?.origin).toBeUndefined();
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 });

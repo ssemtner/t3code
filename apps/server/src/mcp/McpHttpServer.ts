@@ -60,6 +60,14 @@ import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 import * as ThemeHandlers from "./toolkits/theme/handlers.ts";
+import { MachinesToolkit } from "./toolkits/machines/tools.ts";
+import * as MachinesHandlers from "./toolkits/machines/handlers.ts";
+import {
+  isPlanInputRequired,
+  MACHINES_PLAN_INPUT_TOOLS,
+  MachinesPlanToolkit,
+} from "./toolkits/machinesPlan/tools.ts";
+import * as MachinesPlanHandlers from "./toolkits/machinesPlan/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
@@ -1305,6 +1313,72 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
+const isCallToolResult = Schema.is(McpSchema.CallToolResult);
+
+/** Turns a listed tool's `{ inputRequests }` result into an MCP input-required answer. */
+const withInputRequests = Effect.fn("McpHttpServer.withInputRequests")(function* <A, E, R>(
+  inputTools: ReadonlySet<string>,
+  registration: Effect.Effect<A, E, R>,
+) {
+  const server = yield* McpServer.McpServer;
+  const inputServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function (options) {
+      if (!inputTools.has(options.tool.name)) return server.addTool(options);
+      return server.addTool({
+        ...options,
+        handle: (payload) =>
+          options.handle(payload).pipe(
+            Effect.map((result) =>
+              isCallToolResult(result) &&
+              result.isError !== true &&
+              isPlanInputRequired(result.structuredContent)
+                ? new McpSchema.InputRequired({
+                    inputRequests: result.structuredContent.inputRequests as Record<
+                      string,
+                      McpSchema.McpInputRequest
+                    >,
+                  })
+                : result,
+            ),
+          ),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, inputServer));
+});
+
+/**
+ * A toolkit whose `inputTools` may ask the client for input (MCP 2026-07-28 input requests),
+ * such as the user's approval; the handlers keep their `McpToolAccess` checks.
+ */
+const inputToolRegistration = <Tools extends Record<string, Tool.Any>, EX, RX>(
+  toolkit: Toolkit.Toolkit<Tools>,
+  handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
+  inputTools: ReadonlySet<string>,
+) =>
+  Layer.effectDiscard(
+    withToolAnalytics(
+      withToolSpans(
+        withInputRequests(
+          inputTools,
+          withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        ),
+      ),
+    ),
+  ).pipe(
+    Layer.provide(
+      provideRegistrationServices<
+        Exclude<
+          Tool.Requirements<Tools[keyof Tools]>,
+          McpInvocationContext.McpInvocationContext | McpSchema.McpRequestContext
+        >
+      >().layer,
+    ),
+    Layer.provide(McpServer.McpServer.layer),
+    Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
+  );
+
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
   imageToolRegistration(registerHtmlPreview(), HtmlHandlers.layerPreview),
@@ -1469,4 +1543,18 @@ export const layerToolSearch = Layer.mergeAll(
   layerDeferredListing,
 ).pipe(Layer.provide(layerToolExposure));
 
-export const layer = layerMcpTransport(Layer.mergeAll(layerTools, layerToolSearch));
+// Fork-only; outside layerTools so the measured context budget and Claude allow-list are unchanged.
+export const layerMachinesPlanToolkit = inputToolRegistration(
+  MachinesPlanToolkit,
+  MachinesPlanHandlers.layer,
+  MACHINES_PLAN_INPUT_TOOLS,
+);
+
+const layerMachinesToolkit = Layer.mergeAll(
+  toolkitRegistration(MachinesToolkit, MachinesHandlers.layer),
+  layerMachinesPlanToolkit,
+);
+
+export const layer = layerMcpTransport(
+  Layer.mergeAll(layerTools, layerToolSearch, layerMachinesToolkit),
+);

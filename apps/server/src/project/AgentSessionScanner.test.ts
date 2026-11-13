@@ -2606,6 +2606,60 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("reads a named transcript outside the cached scan, the root, and the window", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const otherWorkspace = yield* makeTempDir("t3code-workspace-other-");
+        const sessionId = "3e9c4a5b-af6d-4e8a-b1c2-d4e5f6a7b8c9";
+        const filePath = path.join(claudeHomePath, "projects", "-copied", `${sessionId}.jsonl`);
+
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          expect(yield* scanner.recentThreads(workspace).pipe(Stream.runCollect)).toEqual([]);
+          yield* writeTranscript({
+            filePath,
+            contents: [
+              encodeTranscriptRecord({
+                type: "user",
+                cwd: otherWorkspace,
+                sessionId,
+                timestamp: "2026-06-01T12:00:00.000Z",
+                message: { role: "user", content: "Continue on this machine" },
+              }),
+              encodeTranscriptRecord({
+                type: "assistant",
+                sessionId,
+                timestamp: "2026-06-01T12:01:00.000Z",
+                message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
+              }),
+            ].join("\n"),
+            mtimeMs: nowMs - 60 * 24 * 60 * 60 * 1000,
+          });
+
+          expect(
+            yield* scanner.readSessionTranscript({
+              source: "claudeAgent",
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+              filePath,
+            }),
+          ).toMatchObject({
+            _tag: "Importable",
+            thread: {
+              providerSessionId: sessionId,
+              messages: [{ text: "Continue on this machine" }, { text: "Done" }],
+            },
+            source: { filePath, provider: "claudeAgent", providerSessionId: sessionId },
+            worktree: null,
+          });
+        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+      }),
+    );
+
     it.effect(
       "imports same-metadata replacements with exact large file IDs and backfills legacy IDs once",
       () =>

@@ -1372,6 +1372,125 @@ export function summarizeT3ToolCalls(
       }
       break;
     }
+    case "machines-survey": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Surveyed machines {count} time} other {Surveyed machines {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to survey machines {count} time} other {Tried to survey machines {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "machines-receive": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Received {count} machine transfer} other {Received {count} machine transfers}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to receive {count} machine transfer} other {Tried to receive {count} machine transfers}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "machines-undo": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Undid {count} machine transfer} other {Undid {count} machine transfers}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to undo {count} machine transfer} other {Tried to undo {count} machine transfers}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "machines-plan-propose": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Proposed {count} machine plan} other {Proposed {count} machine plans}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to propose {count} machine plan} other {Tried to propose {count} machine plans}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "machines-plan-status": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Checked machine plan status {count} time} other {Checked machine plan status {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to check machine plan status {count} time} other {Tried to check machine plan status {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "machines-plan-execute": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Ran {count} machine plan step} other {Ran {count} machine plan steps}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to run {count} machine plan step} other {Tried to run {count} machine plan steps}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "machines-plan-undo": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Undid {count} machine plan step} other {Undid {count} machine plan steps}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to undo {count} machine plan step} other {Tried to undo {count} machine plan steps}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "attachment-send": {
       const messages = new Map<string, (typeof selected)[number]>();
       selected.forEach((call, index) =>

@@ -16,6 +16,11 @@ import * as Path from "effect/Path";
 import * as ProcessRunner from "../processRunner.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { explicitBareRepositoryEnv, unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
+import {
+  groupsByHistory,
+  HISTORY_GROUPING_CONFIG_PATTERN,
+  withHistoryGroup,
+} from "./repositoryHistoryGroup.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY = 512;
@@ -323,17 +328,25 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const env = gitEnv(yield* HostProcess.Platform);
-  const runGit = (args: ReadonlyArray<string>) =>
+  const runGit = (args: ReadonlyArray<string>, timeout?: Duration.Input) =>
     processRunner
       .run({
         command: "git",
         args: ["-C", cacheKey.rootPath, ...(cacheKey.isBare ? ["--git-dir=."] : []), ...args],
         env,
+        timeout,
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
   const [remoteResult, resolvedResult] = yield* Effect.all(
-    [runGit(["remote", "-v"]), runGit(["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"])],
+    [
+      runGit(["remote", "-v"]),
+      runGit([
+        "config",
+        "--get-regexp",
+        `^(remote\\..*\\.gh-resolved|${HISTORY_GROUPING_CONFIG_PATTERN})$`,
+      ]),
+    ],
     { concurrency: "unbounded" },
   );
   if (remoteResult._tag === "None" || remoteResult.value.code !== 0) {
@@ -354,13 +367,14 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     originUrl === undefined || originUrl === remote.remoteUrl
       ? keyUrl
       : yield* sshResolvedRemoteUrl(originUrl);
-  return buildRepositoryIdentity({
+  const identity = buildRepositoryIdentity({
     ...remote,
     keyUrl,
     originUrl,
     originKeyUrl,
     rootPath: cacheKey.rootPath,
   });
+  return groupsByHistory(resolved) ? yield* withHistoryGroup(identity, runGit) : identity;
 });
 
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (

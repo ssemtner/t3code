@@ -240,6 +240,15 @@ const makeImporter = Effect.fn(function* (
           realScan === undefined
             ? Layer.mock(AgentSessionScanner.AgentSessionScanner)({
                 recentThreads: () => Stream.fromIterable(candidates),
+                readSessionTranscript: (input) =>
+                  Effect.succeed(
+                    candidates.find(
+                      ({ source }) =>
+                        source.provider === input.source &&
+                        source.providerInstanceId === input.providerInstanceId &&
+                        source.filePath === input.filePath,
+                    ) ?? { _tag: "Skipped" },
+                  ),
               })
             : Layer.succeed(AgentSessionScanner.AgentSessionScanner, realScan.scanner),
           Layer.mock(ProjectService.ProjectService)({
@@ -279,6 +288,11 @@ const makeImporter = Effect.fn(function* (
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
   return {
     run: importer.importRecentAgentThreads({ projectId }),
+    importTranscripts: (sources: ReadonlyArray<ReturnType<typeof candidate>>) =>
+      importer.importSessionTranscripts({
+        projectId,
+        transcripts: sources.map(({ source }) => source),
+      }),
     importNativeHistory: importer.importNativeHistory,
     published,
   };
@@ -421,6 +435,53 @@ it.effect("tolerates a missing transcript owner but propagates failed ownership 
         cause: { _tag: "ProjectionStoreReadError" },
       },
     });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("imports named Claude transcripts once, leaving other and owned sessions alone", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventStore.EventStoreV2;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const named = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "0b6f1d2e-7c3a-4b5d-8e9f-a1b2c3d4e5f6",
+      "claudeAgent",
+    );
+    const other = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "1c7a2e3f-8d4b-4c6e-9fa0-b2c3d4e5f6a7",
+      "claudeAgent",
+    );
+    const owned = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "2d8b3f4a-9e5c-4d7f-a0b1-c3d4e5f6a7b8",
+      "claudeAgent",
+    );
+    yield* seedOwner(owned);
+    const importer = yield* makeImporter([named, other, owned]);
+
+    expect(yield* importer.importTranscripts([named, owned])).toEqual({
+      importedCount: 1,
+      skippedCount: 0,
+    });
+    const threadId = importId(named);
+    const committed = yield* events.read({ threadId }).pipe(Stream.runCollect);
+    expect((yield* projections.getThread(threadId)).projectId).toBe(projectId);
+    expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId }))).toMatchObject({
+      resumeCursor: { threadId, resume: named.source.providerSessionId },
+      runtimePayload: { cwd: "/workspace/project", importedTranscripts: [named.source] },
+    });
+    for (const source of [other, owned]) {
+      expect(yield* Effect.option(projections.getThread(importId(source)))).toEqual(Option.none());
+    }
+
+    expect(yield* importer.importTranscripts([named])).toEqual({
+      importedCount: 1,
+      skippedCount: 0,
+    });
+    expect(yield* events.read({ threadId }).pipe(Stream.runCollect)).toEqual(committed);
+    expect((yield* runtimes.list()).map((runtime) => runtime.threadId)).toEqual([threadId]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
