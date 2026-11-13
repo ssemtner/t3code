@@ -127,6 +127,14 @@
       "types": "./src/KeyedLock.ts",
       "import": "./src/KeyedLock.ts"
     },
+    "./machinesCheckout": {
+      "types": "./src/machinesCheckout.ts",
+      "import": "./src/machinesCheckout.ts"
+    },
+    "./machinesInventoryDiff": {
+      "types": "./src/machinesInventoryDiff.ts",
+      "import": "./src/machinesInventoryDiff.ts"
+    },
     "./schemaJson": {
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"

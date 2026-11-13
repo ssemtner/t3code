@@ -13,6 +13,7 @@ import {
   type OrchestratorMcpThreadTimelineItem,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
+  type Project,
   type ProjectId,
   type ProviderInstanceId,
   ProviderDriverKind,
@@ -46,6 +47,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import { projectsWithRepository } from "../project/repositoryHistoryGroup.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
@@ -182,17 +184,16 @@ const make = Effect.gen(function* () {
     );
     // The project's own identity is a one-minute cache that reads blank when
     // cold, so resolve it here, as the other side's t3_project_list does.
-    const key =
-      here === undefined
-        ? undefined
-        : (yield* repositoryIdentities.resolve(here.workspaceRoot))?.canonicalKey;
-    if (key === undefined) {
+    const identity =
+      here === undefined ? null : yield* repositoryIdentities.resolve(here.workspaceRoot);
+    if (identity === null) {
       return yield* new OrchestratorMcpFailure({
         code: "target_required",
         message: "Pass target.projectId: this thread's project has no repository to match there.",
       });
     }
-    const matches: Array<{ readonly id: ProjectId; readonly title: string }> = [];
+    const key = identity.canonicalKey;
+    const listedProjects: Array<Project> = [];
     let cursor: number | null = 0;
     while (cursor !== null) {
       const listed: Tool.Success<typeof ProjectToolkit.tools.t3_project_list> =
@@ -200,11 +201,10 @@ const make = Effect.gen(function* () {
           cursor,
           limit: 100,
         });
-      matches.push(
-        ...listed.projects.filter((project) => project.repositoryIdentity?.canonicalKey === key),
-      );
+      listedProjects.push(...listed.projects);
       cursor = listed.nextCursor;
     }
+    const matches = projectsWithRepository(listedProjects, identity);
     if (matches.length === 1) return matches[0]!.id;
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",

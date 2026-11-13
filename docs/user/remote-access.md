@@ -191,6 +191,15 @@ on that machine. Existing threads stay where they started. If resource checks ar
 unavailable or all eligible machines are full, choose a machine manually to continue.
 Mobile keeps its manual environment selection.
 
+### Group one repository across machines
+
+Checkouts on different machines share one project when they fetch the same remote. When one
+machine fetches a repository through another remote, such as the team repository on one and your
+fork on another, T3 Code groups clones by their first commit instead. A fork then shares a
+group with the repository it came from, and prompt links with a `repo` no longer find these
+projects. Run `git config t3code.groupByHistory false` in a checkout to group it by its remote
+again, or add `--global` for every checkout on that machine. Restart T3 Code to apply it at once.
+
 ### Tailscale HTTPS
 
 Join both devices to the same tailnet. In the desktop app, enable **Tailscale
@@ -361,7 +370,9 @@ app has an address for that machine and is connected to it with a session that
 manages access there, it makes the pairing code itself; otherwise paste one
 from that machine's **Settings → Sharing & access**. An address you type always
 needs a pasted code. From a terminal, use
-`t3 environment link <address> --pairing-code <code> --access <mode>`.
+`t3 environment link <address> --pairing-code <code> --access <mode>`. To link
+several machines at once, open **Machines**, select them, and choose **Link
+selected both ways**.
 
 You can also ask an agent to link a machine by name, such as "delegate this to
 my vps". It shows a card in the thread where you pick the machine the same way

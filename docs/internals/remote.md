@@ -16,7 +16,10 @@ an agent reaches another environment's threads only through a peer link.
 The canonical key follows the `upstream` remote when one exists, so pull request
 features target the repository a fork tracks. A fork also reports its own
 `origin`, and clients group and label by that, so a fork never collapses into a
-checkout of its upstream.
+checkout of its upstream. Unless `git config t3code.groupByHistory false` opts a
+checkout out, the server reports the first-parent root commit as `origin.canonicalKey`, the only
+field stock clients group on, so clones behind different remotes group across
+machines. This default is specific to this fork, and prompt links stop matching because they read that key as `host/owner/name`.
 
 [Environment ID initialization](../../apps/server/src/environment/ServerEnvironment.ts)
 must publish a complete ID atomically. Repair of an empty ID file retains a

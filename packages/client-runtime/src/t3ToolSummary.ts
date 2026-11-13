@@ -374,6 +374,27 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("environmentId")), "linked environment"),
       );
       break;
+    case "machines-survey":
+      label = phrase("Surveyed", "survey", `machines ${times}`);
+      break;
+    case "machines-receive":
+      label = phrase("Received", "receive", quantity(selected.length, "machine transfer"));
+      break;
+    case "machines-undo":
+      label = phrase("Undid", "undo", quantity(selected.length, "machine transfer"));
+      break;
+    case "machines-plan-propose":
+      label = phrase("Proposed", "propose", quantity(selected.length, "machine plan"));
+      break;
+    case "machines-plan-status":
+      label = phrase("Checked", "check", `machine plan status ${times}`);
+      break;
+    case "machines-plan-execute":
+      label = phrase("Ran", "run", quantity(selected.length, "machine plan step"));
+      break;
+    case "machines-plan-undo":
+      label = phrase("Undid", "undo", quantity(selected.length, "machine plan step"));
+      break;
     case "attachment-prepare":
       label = phrase(
         "Prepared",

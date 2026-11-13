@@ -21,6 +21,7 @@ export type ThreadActionMenuId =
   | "regenerate-title"
   | "mark-unread"
   | "share-guest"
+  | "move-to-machine"
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -95,6 +96,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Absent hides "Move to machine…"; a string disables it with that reason. */
+  readonly moveToMachineReason?: string | null;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -182,6 +185,16 @@ export function buildThreadActionMenuItems(
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),
+    ...(state.moveToMachineReason === undefined
+      ? []
+      : [
+          {
+            id: "move-to-machine" as const,
+            label: "Move to machine…",
+            disabled: state.moveToMachineReason !== null,
+            ...(state.moveToMachineReason === null ? {} : { detail: state.moveToMachineReason }),
+          },
+        ]),
     ...(state.projectFilter
       ? [
           {

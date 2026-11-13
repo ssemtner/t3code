@@ -69,6 +69,7 @@ import {
   EnvironmentSpeechStatus,
   EnvironmentSpeechTranscriptionResult,
 } from "./speech.ts";
+import { makeMachinesHttpApiGroup } from "./machinesHttpApi.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
   OrchestrationV2ShellHttpSnapshot,
@@ -1063,6 +1064,15 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
 
+export class EnvironmentMachinesHttpApi extends makeMachinesHttpApiGroup(
+  EnvironmentAuthenticatedAuth,
+  {
+    scope: EnvironmentScopeRequiredError,
+    notFound: EnvironmentResourceNotFoundError,
+    internal: EnvironmentInternalError,
+  },
+) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -1072,4 +1082,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentMachinesHttpApi)
   .add(EnvironmentWebhooksHttpApi) {}
