@@ -55,6 +55,13 @@ export type T3McpToolSummaryAction =
   | "environment-link"
   | "environment-unlink"
   | "environment-update"
+  | "machines-survey"
+  | "machines-receive"
+  | "machines-undo"
+  | "machines-plan-propose"
+  | "machines-plan-status"
+  | "machines-plan-execute"
+  | "machines-plan-undo"
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
@@ -353,6 +360,31 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_environment_preferences_update: tool(
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
+  ),
+  t3_machines_survey: tool(
+    ["Survey", "Surveying", "Surveyed", "machines, projects and sessions"],
+    "machines-survey",
+  ),
+  t3_machines_receive: tool(
+    ["Receive", "Receiving", "Received", "sessions and work from a linked machine"],
+    "machines-receive",
+  ),
+  t3_machines_undo: tool(["Undo", "Undoing", "Undid", "a machine transfer"], "machines-undo"),
+  t3_machines_plan_propose: tool(
+    ["Propose", "Proposing", "Proposed", "a cross-machine plan"],
+    "machines-plan-propose",
+  ),
+  t3_machines_plan_status: tool(
+    ["Check", "Checking", "Checked", "a cross-machine plan"],
+    "machines-plan-status",
+  ),
+  t3_machines_plan_execute: tool(
+    ["Run", "Running", "Ran", "a cross-machine plan step"],
+    "machines-plan-execute",
+  ),
+  t3_machines_plan_undo: tool(
+    ["Undo", "Undoing", "Undid", "a cross-machine plan step"],
+    "machines-plan-undo",
   ),
   t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
   t3_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),

@@ -73,6 +73,7 @@ import {
   RotateCcwIcon,
   SettingsIcon,
   MonitorIcon,
+  NetworkIcon,
   PinIcon,
   PinOffIcon,
   PlugIcon,
@@ -257,6 +258,7 @@ import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
+import { openMoveThreadDialog, readMoveToMachineReason } from "./machines/moveThreadDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
@@ -1485,6 +1487,20 @@ function OpenCommandPaletteDialog(props: {
   }
 
   if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    const reason = readMoveToMachineReason(threadRef);
+    actionItems.push({
+      kind: "action",
+      value: "action:move-thread-to-machine",
+      searchTerms: ["move", "machine", "transfer", "handoff", "computer"],
+      title: "Move to machine…",
+      ...(reason === null ? {} : { description: reason, disabled: true }),
+      icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
+      run: async () => openMoveThreadDialog(threadRef),
+    });
+  }
+
+  if (activeThread !== null) {
     const thread = activeThread;
     actionItems.push({
       kind: "action",
@@ -1677,6 +1693,17 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:machines",
+    searchTerms: ["machines", "environments", "computers", "link", "peer", "mesh", "network"],
+    title: "Open machines",
+    icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/machines" });
     },
   });
 

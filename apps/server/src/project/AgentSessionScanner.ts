@@ -238,6 +238,11 @@ export class AgentSessionScanner extends Context.Service<
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
+    readonly readSessionTranscript: (input: {
+      readonly source: AgentSessionSource;
+      readonly providerInstanceId: ProviderInstanceId;
+      readonly filePath: string;
+    }) => Effect.Effect<AgentSessionRecentThread, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
 
@@ -2184,7 +2189,48 @@ export const make = Effect.gen(function* () {
     completedSources = [],
   ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
 
-  return AgentSessionScanner.of({ scan, recentThreads });
+  const readSessionTranscript = Effect.fn("AgentSessionScanner.readSessionTranscript")(
+    function* (input: {
+      readonly source: AgentSessionSource;
+      readonly providerInstanceId: ProviderInstanceId;
+      readonly filePath: string;
+    }): Effect.fn.Return<AgentSessionRecentThread> {
+      const stats = yield* statOption(input.filePath);
+      if (Option.isNone(stats) || stats.value.type !== "File") return { _tag: "Skipped" };
+      const identity = transcriptIdentity(input.filePath, stats.value);
+      const snapshot = yield* readTranscript(input.filePath, identity, input.source);
+      if (snapshot === null) return { _tag: "Skipped" };
+      const thread = parseAgentSessionRecords(
+        {
+          source: input.source,
+          providerInstanceId: input.providerInstanceId,
+          fallbackSessionId: path.basename(
+            input.filePath,
+            isCompressedTranscript(input.filePath) ? COMPRESSED_TRANSCRIPT_SUFFIX : ".jsonl",
+          ),
+          lastActiveAtMs: identity.mtimeMs ?? (yield* Clock.currentTimeMillis),
+        },
+        snapshot.records,
+        snapshot.claudeFields,
+        snapshot.droppedMessageCount,
+      );
+      if (thread === null) return { _tag: "Skipped" };
+      return {
+        _tag: "Importable",
+        thread,
+        source: {
+          ...identity,
+          provider: thread.source,
+          providerInstanceId: thread.providerInstanceId,
+          providerSessionId: thread.providerSessionId,
+        },
+        worktree: null,
+      };
+    },
+    importReadLock.withPermits(1),
+  );
+
+  return AgentSessionScanner.of({ scan, recentThreads, readSessionTranscript });
 });
 
 export const layer = Layer.effect(AgentSessionScanner, make).pipe(

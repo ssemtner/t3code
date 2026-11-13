@@ -16,6 +16,8 @@ import {
   TurnItemId,
   type AgentSessionImportInput,
   type AgentSessionImportResult,
+  type AgentSessionImportSource,
+  type ProviderInstanceId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -200,8 +202,13 @@ const make = Effect.gen(function* () {
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
-  const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
+  // Untraced: each caller below names the import's span.
+  const importAgentThreads = Effect.fnUntraced(function* (
     input: AgentSessionImportInput,
+    outcomesFor: (
+      project: { readonly workspaceRoot: string },
+      completedSources: ReadonlyArray<AgentSessionImportSource>,
+    ) => Stream.Stream<AgentSessionScanner.AgentSessionRecentThread, AgentSessionScanError>,
   ) {
     const project = yield* projects.getById(input.projectId).pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
@@ -254,7 +261,7 @@ const make = Effect.gen(function* () {
       }
       return payload.value.importedTranscripts ?? [];
     });
-    const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources);
+    const outcomes = outcomesFor(project, completedSources);
     const importedThreadIds = new Set<ThreadId>();
     let importedCount = 0;
     let skippedCount = 0;
@@ -489,6 +496,31 @@ const make = Effect.gen(function* () {
     return { importedCount, skippedCount } satisfies AgentSessionImportResult;
   });
 
+  const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
+    input: AgentSessionImportInput,
+  ) {
+    return yield* importAgentThreads(input, (project, completedSources) =>
+      scanner.recentThreads(project.workspaceRoot, completedSources),
+    );
+  });
+
+  const importSessionTranscripts = Effect.fn("importSessionTranscriptsV2")(function* (
+    input: AgentSessionImportInput & {
+      readonly transcripts: ReadonlyArray<{
+        readonly providerInstanceId: ProviderInstanceId;
+        readonly filePath: string;
+      }>;
+    },
+  ) {
+    return yield* importAgentThreads(input, () =>
+      Stream.fromIterable(input.transcripts).pipe(
+        Stream.mapEffect(({ providerInstanceId, filePath }) =>
+          scanner.readSessionTranscript({ source: "claudeAgent", providerInstanceId, filePath }),
+        ),
+      ),
+    );
+  });
+
   /**
    * Loading a native session replays its history only into the adapter's own
    * snapshot, so copy that snapshot into the thread as run-less history. The
@@ -587,7 +619,7 @@ const make = Effect.gen(function* () {
     return yield* commit(messages);
   });
 
-  return { importRecentAgentThreads, importNativeHistory };
+  return { importRecentAgentThreads, importSessionTranscripts, importNativeHistory };
 });
 
 type AgentSessionImporterShape = Effect.Success<typeof make>;
