@@ -78,6 +78,10 @@ case "${1:-}" in
 
   push)
     lease="$(cat "$lease_file")"
+    # Something outside this repo disables the workflow within the hour of every enable, and a
+    # disabled workflow ignores the push.
+    gh workflow enable fork-release.yml -R "$FORK_REPO"
+    sleep 5
     push() { git "$@" push --force-with-lease="$BRANCH:$lease" "${remote:-origin}" "$BRANCH" 2>&1; }
     # A gh token without the `workflow` scope cannot push upstream's workflow file changes.
     if out="$(push -c credential.helper= -c credential.helper='!gh auth git-credential')"; then
@@ -100,7 +104,24 @@ EOF
       fi
     fi
     rm -f "$lease_file"
-    echo "Pushed. Version being built: $(scripts/fork-release.sh version "<run number>")"
+    latest_run() {
+      gh run list -R "$FORK_REPO" --workflow fork-release.yml --limit 1 "$@" --json databaseId --jq '.[0].databaseId // empty'
+    }
+    job_count() { gh run view "$1" -R "$FORK_REPO" --json jobs --jq '.jobs | length'; }
+    run_id=""
+    for _ in 1 2 3 4 5 6; do
+      sleep 10
+      run_id="$(latest_run --commit "$(git rev-parse HEAD)" || true)"
+      [ -n "$run_id" ] && break
+    done
+    [ -n "$run_id" ] && sleep 30
+    # A run can sit queued with no jobs when it starts right after the enable; start another.
+    if [ -z "$run_id" ] || [ "$(job_count "$run_id" || true)" = "0" ]; then
+      gh workflow run fork-release.yml -R "$FORK_REPO" --ref "$BRANCH"
+      sleep 20
+      run_id="$(latest_run --event workflow_dispatch || true)"
+    fi
+    echo "Pushed. Release build run: $run_id"
     ;;
 
   *)
