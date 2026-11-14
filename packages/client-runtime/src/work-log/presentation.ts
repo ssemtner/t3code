@@ -659,6 +659,7 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "environment-update":
     case "theme-set":
     case "machines-receive":
+    case "machines-import-local":
     case "machines-undo":
     case "machines-plan-propose":
     case "machines-plan-execute":

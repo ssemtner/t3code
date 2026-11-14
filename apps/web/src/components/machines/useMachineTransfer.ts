@@ -5,7 +5,14 @@ import {
   runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, MachineReceiveInput, MachineTransferReport } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  MachineLocalImportResult,
+  MachineReceiveInput,
+  MachineSessionSummary,
+  MachineTransferReport,
+  ProjectId,
+} from "@t3tools/contracts";
 import { useContext, useEffect, useRef, useState } from "react";
 
 import { machineEnvironment } from "~/state/machines";
@@ -24,6 +31,25 @@ type Step<A> =
   | { readonly ok: true; readonly value: A }
   | { readonly ok: false; readonly error: string };
 
+async function runStep<A, E, W>(
+  registry: Parameters<typeof runAtomCommand>[0],
+  command: AtomCommand<W, A, E>,
+  value: W,
+): Promise<Step<A>> {
+  const result = await runAtomCommand(registry, command, value, {
+    label: command.label,
+    reportFailure: false,
+    reportDefect: true,
+  });
+  if (result._tag === "Success") return { ok: true, value: result.value };
+  return {
+    ok: false,
+    error: isAtomCommandInterrupted(result)
+      ? "Stopped."
+      : transferFailureMessage(squashAtomCommandFailure(result)),
+  };
+}
+
 const IDLE: MachineTransferState = { environmentId: null, report: null, error: null, busy: false };
 // The server holds a report request while the transfer runs; this only stops a tight loop.
 const MIN_POLL_INTERVAL_MS = 1_000;
@@ -40,20 +66,8 @@ export function useMachineTransfer() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops the report poll loop on unmount
   useEffect(() => () => void generation.current++, []);
 
-  const run = async <A, E, W>(command: AtomCommand<W, A, E>, value: W): Promise<Step<A>> => {
-    const result = await runAtomCommand(registry, command, value, {
-      label: command.label,
-      reportFailure: false,
-      reportDefect: true,
-    });
-    if (result._tag === "Success") return { ok: true, value: result.value };
-    return {
-      ok: false,
-      error: isAtomCommandInterrupted(result)
-        ? "Stopped."
-        : transferFailureMessage(squashAtomCommandFailure(result)),
-    };
-  };
+  const run = <A, E, W>(command: AtomCommand<W, A, E>, value: W) =>
+    runStep(registry, command, value);
 
   const follow = async (
     environmentId: EnvironmentId,
@@ -135,4 +149,45 @@ export function useMachineTransfer() {
   };
 
   return { ...state, start, watch, undo, reset };
+}
+
+export type LocalImportState = { readonly session: MachineSessionSummary } & (
+  | { readonly kind: "running" }
+  | { readonly kind: "failed"; readonly error: string }
+  | { readonly kind: "done"; readonly result: MachineLocalImportResult["sessions"][number] }
+);
+
+/** Opens sessions as threads on the machine that already holds them, one request per session. */
+export function useMachineLocalImport() {
+  const registry = useContext(RegistryContext);
+  const [states, setStates] = useState<ReadonlyMap<string, LocalImportState>>(new Map());
+  const set = (state: LocalImportState) =>
+    setStates((current) => new Map(current).set(state.session.sessionId, state));
+
+  const importSession = async (
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+    session: MachineSessionSummary,
+  ) => {
+    set({ session, kind: "running" });
+    const step = await runStep(registry, machineEnvironment.importLocal, {
+      environmentId,
+      input: { projectId, sessionIds: [session.sessionId] },
+    });
+    const result = step.ok
+      ? step.value.sessions.find((entry) => entry.sessionId === session.sessionId)
+      : undefined;
+    if (result === undefined) {
+      set({
+        session,
+        kind: "failed",
+        error: step.ok ? "The machine did not report this session." : step.error,
+      });
+      return false;
+    }
+    set({ session, kind: "done", result });
+    return result.threadId !== null;
+  };
+
+  return { states, importSession };
 }

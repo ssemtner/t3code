@@ -5,6 +5,7 @@ import {
   AuthSourceControlWriteScope,
   type EnvironmentId,
   type MachineSessionSummary,
+  type MachineSurveyInput,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { useContext, useState } from "react";
@@ -17,22 +18,36 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import { SettingsSection } from "../settings/settingsLayout";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
-import { MachineTransferReport } from "./MachineTransferReport";
+import { MachineTransferReport, OpenThreadLink } from "./MachineTransferReport";
 import {
   checkoutFacts,
   comparePreview,
   copyWorkBlockReason,
   groupRepositories,
+  localImportBlockReason,
+  localImportStatusText,
   receiveBlockReason,
   type RepoCell,
   type RepoRow,
   type TransferEnd,
 } from "./MachinesRepos.logic";
-import { useMachineTransfer } from "./useMachineTransfer";
+import {
+  type LocalImportState,
+  useMachineLocalImport,
+  useMachineTransfer,
+} from "./useMachineTransfer";
 import type { MachineState } from "./useMachines";
 
+const RECENT_SURVEY: MachineSurveyInput = {};
+// The longest window the survey allows.
+const OLDER_SURVEY: MachineSurveyInput = { sinceDays: 90 };
+
 const surveyListsAtom = environmentAtomList("web-machines-repos-surveys", (environmentId) =>
-  machineEnvironment.survey({ environmentId, input: {} }),
+  machineEnvironment.survey({ environmentId, input: RECENT_SURVEY }),
+);
+const olderSurveyListsAtom = environmentAtomList(
+  "web-machines-repos-surveys-older",
+  (environmentId) => machineEnvironment.survey({ environmentId, input: OLDER_SURVEY }),
 );
 
 const checkoutAtom = (cell: RepoCell) =>
@@ -47,6 +62,8 @@ export function MachinesReposSection({
   readonly machines: ReadonlyArray<MachineState>;
 }) {
   const now = DateTime.makeUnsafe(useNowMinute());
+  const [includeOlder, setIncludeOlder] = useState(false);
+  const surveyInput = includeOlder ? OLDER_SURVEY : RECENT_SURVEY;
   const transferable = machines.filter((machine) => machine.facts.machineTransfers === true);
   const readable = useEnvironmentsWithScope(transferable, AuthOrchestrationReadScope);
   const operable = useEnvironmentsWithScope(transferable, AuthOrchestrationOperateScope);
@@ -55,7 +72,9 @@ export function MachinesReposSection({
     (machine) => machine.connected && readable.has(machine.environmentId),
   );
   const results = useAtomValue(
-    surveyListsAtom(environmentIdsKey(queried.map(({ environmentId }) => environmentId))),
+    (includeOlder ? olderSurveyListsAtom : surveyListsAtom)(
+      environmentIdsKey(queried.map(({ environmentId }) => environmentId)),
+    ),
   );
 
   if (transferable.length === 0) return null;
@@ -91,12 +110,25 @@ export function MachinesReposSection({
         peerLinks: machine.peerLinks,
         links: machine.links,
         canReceive: operable.has(machine.environmentId) && writable.has(machine.environmentId),
+        machineTransfers: machine.facts.machineTransfers,
+        canCreateThreads: operable.has(machine.environmentId),
       },
     ]),
   );
 
   return (
-    <SettingsSection title="Repositories">
+    <SettingsSection
+      title="Repositories"
+      headerAction={
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Checkbox
+            checked={includeOlder}
+            onCheckedChange={(checked) => setIncludeOlder(checked === true)}
+          />
+          Sessions from the last 90 days
+        </label>
+      }
+    >
       {notes.map((note) => (
         <p key={note} className="px-3 py-2 text-xs text-muted-foreground sm:px-4" role="status">
           {note}
@@ -109,7 +141,7 @@ export function MachinesReposSection({
       ) : null}
       <ul aria-label="Repositories" className="divide-y divide-border/50">
         {rows.map((row) => (
-          <RepoRowView key={row.key} row={row} ends={ends} now={now} />
+          <RepoRowView key={row.key} row={row} ends={ends} now={now} surveyInput={surveyInput} />
         ))}
       </ul>
     </SettingsSection>
@@ -123,10 +155,12 @@ function RepoRowView({
   row,
   ends,
   now,
+  surveyInput,
 }: {
   readonly row: RepoRow;
   readonly ends: ReadonlyMap<EnvironmentId, TransferEnd>;
   readonly now: DateTime.Utc;
+  readonly surveyInput: MachineSurveyInput;
 }) {
   const [expanded, setExpanded] = useState(false);
   // Selection order is direction: the first is the source, the second the destination.
@@ -144,7 +178,9 @@ function RepoRowView({
     );
   const refreshAfter = (cells: ReadonlyArray<RepoCell>) => {
     for (const cell of cells) {
-      registry.refresh(machineEnvironment.survey({ environmentId: cell.environmentId, input: {} }));
+      registry.refresh(
+        machineEnvironment.survey({ environmentId: cell.environmentId, input: surveyInput }),
+      );
       registry.refresh(checkoutAtom(cell));
     }
   };
@@ -172,6 +208,8 @@ function RepoRowView({
               <CheckoutCell
                 key={cell.key}
                 cell={cell}
+                machine={ends.get(cell.environmentId)!}
+                onImported={() => refreshAfter([cell])}
                 showProject={cell.project.title !== row.title}
                 selectable={row.cells.length > 1}
                 selected={selectedKeys.includes(cell.key)}
@@ -235,6 +273,8 @@ function RepoRowView({
 
 function CheckoutCell({
   cell,
+  machine,
+  onImported,
   showProject,
   selectable,
   selected,
@@ -242,6 +282,8 @@ function CheckoutCell({
   onShowTransfer,
 }: {
   readonly cell: RepoCell;
+  readonly machine: TransferEnd;
+  readonly onImported: () => void;
   readonly showProject: boolean;
   readonly selectable: boolean;
   readonly selected: boolean;
@@ -290,12 +332,7 @@ function CheckoutCell({
         {cell.project.checkoutError === null ? null : (
           <p className="text-destructive">{cell.project.checkoutError}</p>
         )}
-        {cell.pendingSessions.length > 0 ? (
-          <p>
-            {pendingSessionsText(cell.pendingSessions.length)}
-            {cell.project.sessionsTruncated ? " (more not listed)" : ""}
-          </p>
-        ) : null}
+        <LocalSessions cell={cell} machine={machine} onImported={onImported} />
         {lastTransfer === undefined ? null : (
           <p>
             Last transfer here: {lastTransfer.status}{" "}
@@ -443,6 +480,115 @@ function SessionRow({
       <Button size="xs" variant="outline" disabled={disabled} onClick={onBring}>
         Bring over
       </Button>
+    </li>
+  );
+}
+
+/** Sessions on the cell's machine that are not threads yet, each importable where it is. */
+function LocalSessions({
+  cell,
+  machine,
+  onImported,
+}: {
+  readonly cell: RepoCell;
+  readonly machine: TransferEnd;
+  readonly onImported: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const local = useMachineLocalImport();
+  const pendingIds = new Set(cell.pendingSessions.map((session) => session.sessionId));
+  // Imported sessions leave the survey once it refreshes; their results stay listed here.
+  const settled = [...local.states.values()].filter(
+    (state) =>
+      state.kind === "done" &&
+      state.result.threadId !== null &&
+      !pendingIds.has(state.session.sessionId),
+  );
+  if (cell.pendingSessions.length === 0 && settled.length === 0) return null;
+  const blocked = localImportBlockReason(machine);
+  const importSession = async (session: MachineSessionSummary) => {
+    const imported = await local.importSession(cell.environmentId, cell.project.projectId, session);
+    if (imported) onImported();
+  };
+  return (
+    <div className="space-y-1">
+      {cell.pendingSessions.length > 0 ? (
+        <Button size="xs" variant="link" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {pendingSessionsText(cell.pendingSessions.length)}
+          {cell.project.sessionsTruncated ? " (more not listed)" : ""}
+        </Button>
+      ) : null}
+      {open && blocked !== null ? <p>{blocked}</p> : null}
+      {open || settled.length > 0 ? (
+        <ul aria-label={`Sessions on ${cell.machineLabel}`} className="space-y-1">
+          {(open ? cell.pendingSessions : []).map((session) => (
+            <LocalSessionRow
+              key={session.sessionId}
+              session={session}
+              state={local.states.get(session.sessionId)}
+              environmentId={cell.environmentId}
+              disabled={blocked !== null}
+              onImport={() => void importSession(session)}
+            />
+          ))}
+          {settled.map((state) => (
+            <LocalSessionRow
+              key={state.session.sessionId}
+              session={state.session}
+              state={state}
+              environmentId={cell.environmentId}
+              disabled={false}
+              onImport={() => undefined}
+            />
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function LocalSessionRow({
+  session,
+  state,
+  environmentId,
+  disabled,
+  onImport,
+}: {
+  readonly session: MachineSessionSummary;
+  readonly state: LocalImportState | undefined;
+  readonly environmentId: EnvironmentId;
+  readonly disabled: boolean;
+  readonly onImport: () => void;
+}) {
+  const threadId = state?.kind === "done" ? state.result.threadId : null;
+  const canTry = state === undefined || (state.kind !== "running" && threadId === null);
+  return (
+    <li className="flex flex-wrap items-center gap-x-2 text-xs">
+      <span className="min-w-0 flex-1 truncate text-foreground">
+        {session.title ?? session.sessionId}
+      </span>
+      {session.lastTimestamp === null ? null : (
+        <span className="shrink-0 max-sm:hidden">
+          {new Date(session.lastTimestamp).toLocaleString()}
+        </span>
+      )}
+      {state?.kind === "running" ? <span role="status">Importing…</span> : null}
+      {state?.kind === "done" ? (
+        <span role="status">{localImportStatusText(state.result)}</span>
+      ) : null}
+      {canTry ? (
+        <Button size="xs" variant="outline" disabled={disabled} onClick={onImport}>
+          Import
+        </Button>
+      ) : null}
+      {threadId === null ? null : (
+        <OpenThreadLink environmentId={environmentId} threadId={threadId} />
+      )}
+      {state?.kind === "failed" ? (
+        <span className="basis-full text-destructive" role="alert">
+          {state.error}
+        </span>
+      ) : null}
     </li>
   );
 }

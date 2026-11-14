@@ -1423,6 +1423,27 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "machines-import-local": {
+      const count = selected.reduce(
+        (total, call) =>
+          total + (Array.isArray(call.input?.sessionIds) ? call.input.sessionIds.length : 0),
+        0,
+      );
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Imported {count} Claude session} other {Imported {count} Claude sessions}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to import {count} Claude session} other {Tried to import {count} Claude sessions}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "machines-plan-propose": {
       const count = selected.length;
       label = done

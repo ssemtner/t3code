@@ -14,6 +14,8 @@ import {
   MachineCheckoutDetail,
   MachineCheckoutInput,
   MachineInventoryInput,
+  MachineLocalImportInput,
+  MachineLocalImportResult,
   MachineMarkMovedInput,
   MachineReceiveInput,
   MachineRequestRefusedError,
@@ -66,6 +68,14 @@ export const makeMachinesHttpApiGroup = (
         headers: Headers,
         payload: MachineReceiveInput,
         success: MachineTransferReport,
+        error,
+      }).middleware(auth),
+    )
+    .add(
+      HttpApiEndpoint.post("importLocal", "/api/machines/ui/import-local", {
+        headers: Headers,
+        payload: MachineLocalImportInput,
+        success: MachineLocalImportResult,
         error,
       }).middleware(auth),
     )

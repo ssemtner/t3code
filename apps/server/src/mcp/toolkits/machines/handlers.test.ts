@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import * as MachineLocalImport from "../../../machines/MachineLocalImport.ts";
 import * as MachineReceiver from "../../../machines/MachineReceiver.ts";
 import * as MachineSource from "../../../machines/MachineSource.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
@@ -73,6 +74,7 @@ const run = <A, E, R>(
             }),
             Layer.mock(MachineSource.MachineSource)({}),
             Layer.mock(MachineReceiver.MachineReceiver)(receiver),
+            Layer.mock(MachineLocalImport.MachineLocalImport)({}),
           ),
         ),
       ),

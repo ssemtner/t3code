@@ -17,6 +17,7 @@ import {
   comparePreview,
   copyWorkBlockReason,
   groupRepositories,
+  localImportBlockReason,
   receiveBlockReason,
   type TransferEnd,
   transferFailureMessage,
@@ -181,6 +182,8 @@ const end = (environmentId: EnvironmentId, overrides: Partial<TransferEnd> = {})
   peerLinks: "on",
   links: { kind: "ready", links: [] },
   canReceive: true,
+  machineTransfers: true,
+  canCreateThreads: true,
   ...overrides,
 });
 
@@ -218,6 +221,32 @@ describe("receiveBlockReason", () => {
       "Nothing uncommitted on laptop.",
     );
     expect(copyWorkBlockReason(source, destination, null, now)).toBe("Loading laptop's checkout…");
+  });
+});
+
+describe("localImportBlockReason", () => {
+  it.each([
+    ["disconnected", end(desk, { connected: false }), "desk is not connected."],
+    [
+      "a server without transfers",
+      end(desk, { machineTransfers: false }),
+      "desk's server cannot import sessions. Update it.",
+    ],
+    [
+      "no permission",
+      end(desk, { canCreateThreads: false }),
+      "No permission to create threads on desk.",
+    ],
+  ])("blocks %s", (_, machine, reason) => {
+    expect(localImportBlockReason(machine)).toBe(reason);
+  });
+
+  it("needs no link, receive permission or source: the session is already there", () => {
+    expect(
+      localImportBlockReason(
+        end(desk, { peerLinks: "off", canReceive: false, links: { kind: "unavailable" } }),
+      ),
+    ).toBeNull();
   });
 });
 
