@@ -59,6 +59,7 @@ export type T3McpToolSummaryAction =
   | "theme-set"
   | "machines-survey"
   | "machines-receive"
+  | "machines-import-local"
   | "machines-undo"
   | "machines-plan-propose"
   | "machines-plan-status"
@@ -373,6 +374,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_machines_receive: tool(
     ["Receive", "Receiving", "Received", "sessions and work from a linked machine"],
     "machines-receive",
+  ),
+  t3_machines_import_local: tool(
+    ["Import", "Importing", "Imported", "Claude sessions as threads"],
+    "machines-import-local",
   ),
   t3_machines_undo: tool(["Undo", "Undoing", "Undid", "a machine transfer"], "machines-undo"),
   t3_machines_plan_propose: tool(

@@ -1,4 +1,6 @@
 import {
+  MachineLocalImportInput,
+  MachineLocalImportResult,
   MachineReceiveInput,
   MachineSurvey,
   MachineSurveyInput,
@@ -9,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
+import * as MachineLocalImport from "../../../machines/MachineLocalImport.ts";
 import * as MachineReceiver from "../../../machines/MachineReceiver.ts";
 import * as MachineSource from "../../../machines/MachineSource.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -22,6 +25,7 @@ const shared = {
     ThreadManagementService.ThreadManagementService,
     MachineSource.MachineSource,
     MachineReceiver.MachineReceiver,
+    MachineLocalImport.MachineLocalImport,
   ],
 };
 const MachinesSurveyTool = Tool.make("t3_machines_survey", {
@@ -48,6 +52,16 @@ const MachinesReceiveTool = Tool.make("t3_machines_receive", {
   }),
   success: MachineTransferReport,
 }).annotate(Tool.Destructive, true);
+const MachinesImportLocalTool = Tool.make("t3_machines_import_local", {
+  ...shared,
+  description:
+    "Open Claude sessions that are already on the machine holding projectId as threads in that project. Use for sessions surveyed on the same machine, including ones started in another folder or worktree; their transcripts are copied into the project, never moved. For sessions on another machine, use t3_machines_receive.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    ...MachineLocalImportInput.fields,
+  }),
+  success: MachineLocalImportResult,
+}).annotate(Tool.Destructive, false);
 const MachinesUndoTool = Tool.make("t3_machines_undo", {
   ...shared,
   description:
@@ -62,5 +76,6 @@ const MachinesUndoTool = Tool.make("t3_machines_undo", {
 export const MachinesToolkit = Toolkit.make(
   MachinesSurveyTool,
   MachinesReceiveTool,
+  MachinesImportLocalTool,
   MachinesUndoTool,
 );

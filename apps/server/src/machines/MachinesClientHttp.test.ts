@@ -19,6 +19,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as ConfigInventory from "./ConfigInventory.ts";
+import * as MachineLocalImport from "./MachineLocalImport.ts";
 import * as MachineReceiver from "./MachineReceiver.ts";
 import * as MachinesClientHttp from "./MachinesClientHttp.ts";
 import * as MachineSource from "./MachineSource.ts";
@@ -56,6 +57,7 @@ const serve = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
                 }),
               ),
           }),
+          Layer.mock(MachineLocalImport.MachineLocalImport)({}),
           Layer.mock(WorkingTreeSnapshot.WorkingTreeSnapshot)({}),
           Layer.mock(MachineThreadMoves.MachineThreadMoves)({}),
           Layer.mock(ConfigInventory.ConfigInventory)({}),
@@ -111,6 +113,11 @@ it.effect.each([
     missing: write,
     // Source control is granted under orchestration:operate, so the error names the permission.
     expected: { requiredScope: operate, requiredPermission: write },
+  },
+  {
+    route: { method: "POST", path: "import-local", body: { projectId: "p", sessionIds: ["s"] } },
+    granted: [read, write],
+    missing: operate,
   },
   { route: { method: "GET", path: "transfers/t-1?wait=1" }, granted: [], missing: read },
   {

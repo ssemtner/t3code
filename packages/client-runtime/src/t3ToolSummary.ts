@@ -380,6 +380,15 @@ export function summarizeT3ToolCalls(
     case "machines-receive":
       label = phrase("Received", "receive", quantity(selected.length, "machine transfer"));
       break;
+    case "machines-import-local": {
+      const sessions = selected.reduce(
+        (total, call) =>
+          total + (Array.isArray(call.input?.sessionIds) ? call.input.sessionIds.length : 0),
+        0,
+      );
+      label = phrase("Imported", "import", quantity(sessions, "Claude session"));
+      break;
+    }
     case "machines-undo":
       label = phrase("Undid", "undo", quantity(selected.length, "machine transfer"));
       break;

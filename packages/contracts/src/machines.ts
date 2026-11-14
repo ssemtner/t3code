@@ -285,6 +285,26 @@ export const MachineReceiveInput = Schema.Struct({
 });
 export type MachineReceiveInput = typeof MachineReceiveInput.Type;
 
+/** Claude sessions already on this machine, opened as threads in one of its projects. */
+export const MachineLocalImportInput = Schema.Struct({
+  projectId: ProjectId,
+  sessionIds: MachineSessionIds.check(Schema.isMinLength(1)),
+});
+export type MachineLocalImportInput = typeof MachineLocalImportInput.Type;
+
+export const MachineLocalImportResult = Schema.Struct({
+  projectId: ProjectId,
+  sessions: Schema.Array(
+    Schema.Struct({
+      sessionId: TrimmedNonEmptyString,
+      threadId: Schema.NullOr(ThreadId),
+      status: Schema.Literals(["imported", "existing-thread", "not-found", "failed"]),
+      reason: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+export type MachineLocalImportResult = typeof MachineLocalImportResult.Type;
+
 export const MachineSurveyInput = Schema.Struct({
   projectId: Schema.optionalKey(ProjectId),
   sinceDays: Schema.optionalKey(

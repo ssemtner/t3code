@@ -20,6 +20,7 @@ import {
   requireEnvironmentScope,
 } from "../auth/http.ts";
 import * as ConfigInventory from "./ConfigInventory.ts";
+import * as MachineLocalImport from "./MachineLocalImport.ts";
 import * as MachineReceiver from "./MachineReceiver.ts";
 import * as MachineSource from "./MachineSource.ts";
 import * as MachineThreadMoves from "./MachineThreadMoves.ts";
@@ -57,6 +58,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const source = yield* MachineSource.MachineSource;
     const receiver = yield* MachineReceiver.MachineReceiver;
+    const localImport = yield* MachineLocalImport.MachineLocalImport;
     const snapshots = yield* WorkingTreeSnapshot.WorkingTreeSnapshot;
     const moves = yield* MachineThreadMoves.MachineThreadMoves;
     const inventory = yield* ConfigInventory.ConfigInventory;
@@ -121,6 +123,20 @@ export const layer = HttpApiBuilder.group(
               MachineUnrelatedProjectError: refused("unrelated-project"),
               MachineClaudeUnavailableError: refused("claude-unavailable"),
               MachineTransferNotFoundError: refused("transfer-not-found"),
+            }),
+            Effect.catch(failUnlessRefused),
+          );
+        }),
+      )
+      .handle(
+        "importLocal",
+        Effect.fn("environment.machines.importLocal")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* localImport.importSessions(args.payload).pipe(
+            Effect.catchTags({
+              MachineProjectNotFoundError: refused("project-not-found"),
+              MachineClaudeUnavailableError: refused("claude-unavailable"),
             }),
             Effect.catch(failUnlessRefused),
           );

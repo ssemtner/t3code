@@ -1,5 +1,9 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, MachineTransferReport as TransferReport } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  MachineTransferReport as TransferReport,
+  ThreadId,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 
 import { buildThreadRouteParams } from "~/threadRoutes";
@@ -12,6 +16,29 @@ const TONE_BADGE = {
   failed: { variant: "error", label: "Failed" },
   done: { variant: "success", label: "Finished" },
 } as const;
+
+export function OpenThreadLink({
+  environmentId,
+  threadId,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  return (
+    <Button
+      size="xs"
+      variant="link"
+      render={
+        <Link
+          to="/$environmentId/$threadId"
+          params={buildThreadRouteParams(scopeThreadRef(environmentId, threadId))}
+        />
+      }
+    >
+      Open
+    </Button>
+  );
+}
 
 /** Any transfer's report. `environmentId` is the destination, where imported threads live. */
 export function MachineTransferReport({
@@ -79,20 +106,7 @@ export function MachineTransferReport({
                 <span className="text-muted-foreground">{session.reason}</span>
               )}
               {session.threadId === null ? null : (
-                <Button
-                  size="xs"
-                  variant="link"
-                  render={
-                    <Link
-                      to="/$environmentId/$threadId"
-                      params={buildThreadRouteParams(
-                        scopeThreadRef(environmentId, session.threadId),
-                      )}
-                    />
-                  }
-                >
-                  Open
-                </Button>
+                <OpenThreadLink environmentId={environmentId} threadId={session.threadId} />
               )}
             </li>
           ))}

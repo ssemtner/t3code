@@ -27,6 +27,11 @@ Claude sessions on each machine.
 
 - **Bring a session here.** Pick a Claude session from another machine and bring it to this one. The
   session continues with its full context.
+- **Import a session on the same machine.** A checkout lists the Claude sessions on its machine that
+  are not threads yet. Expand the list and choose "Import" to open one as a thread in that project, on
+  any connected machine. Sessions started in another folder or worktree are copied into the project
+  first; the original stays where it was. The list covers the last 14 days; tick "Sessions from the
+  last 90 days" to see older ones.
 - **Copy uncommitted work.** Select two checkouts; the first is the source and the second the
   destination. T3 Code applies the changes only when both checkouts are on the same commit and the
   destination has no conflicting edits. Otherwise the work is kept as git refs and nothing is

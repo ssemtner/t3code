@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   isMachineRequestRefusedError,
   type MachineCheckoutDescription,
+  type MachineLocalImportResult,
   type MachineSessionSummary,
   type MachineSurvey,
   type MachineSurveyProject,
@@ -160,6 +161,35 @@ export interface TransferEnd {
   readonly links: PeerLinkListState;
   /** `orchestration:operate` and `source-control:write` on this machine. */
   readonly canReceive: boolean;
+  /** Whether the server advertises machine transfers; null while it is not connected. */
+  readonly machineTransfers: boolean | null;
+  /** `orchestration:operate` on this machine, which creating threads needs. */
+  readonly canCreateThreads: boolean;
+}
+
+/** Why a session cannot become a thread on the machine that holds it, or null when it may. */
+export function localImportBlockReason(machine: TransferEnd): string | null {
+  if (!machine.connected) return `${machine.label} is not connected.`;
+  if (machine.machineTransfers !== true) {
+    return `${machine.label}'s server cannot import sessions. Update it.`;
+  }
+  if (!machine.canCreateThreads) return `No permission to create threads on ${machine.label}.`;
+  return null;
+}
+
+const LOCAL_IMPORT_STATUSES: Record<
+  MachineLocalImportResult["sessions"][number]["status"],
+  string
+> = {
+  imported: "Imported",
+  "existing-thread": "Already a thread",
+  "not-found": "Not found on this machine",
+  failed: "Failed",
+};
+
+export function localImportStatusText(session: MachineLocalImportResult["sessions"][number]) {
+  const status = LOCAL_IMPORT_STATUSES[session.status];
+  return session.reason === undefined ? status : `${status}: ${session.reason}`;
 }
 
 /** Why the destination cannot pull from the source, or null when it may try. */

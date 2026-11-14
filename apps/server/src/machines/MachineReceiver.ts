@@ -1,5 +1,4 @@
 import {
-  ClaudeSettings,
   EnvironmentId,
   type MachineCheckoutDescription,
   type MachineReceiveInput,
@@ -9,18 +8,12 @@ import {
   type MachineWorkingTreeReport,
   PeerLinkError,
   ProjectId,
-  ProviderDriverKind,
-  type ProviderInstanceConfig,
-  ProviderInstanceId,
-  resolveProviderInstanceEnabled,
   type ServerSettingsError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -35,16 +28,14 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as AgentSessionImporter from "../project/AgentSessionImporter.ts";
-import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { compareCheckouts } from "@t3tools/shared/machinesCheckout";
+import * as ClaudeSessionThreads from "./ClaudeSessionThreads.ts";
+import { type ClaudeInstance, MachineClaudeUnavailableError } from "./ClaudeSessionThreads.ts";
 import {
   importClaudeSession,
   isSessionRelativePath,
@@ -130,16 +121,7 @@ export class MachineUnrelatedProjectError extends Schema.TaggedError<MachineUnre
   }
 }
 
-export class MachineClaudeUnavailableError extends Schema.TaggedError<MachineClaudeUnavailableError>()(
-  "MachineClaudeUnavailableError",
-  { providerInstanceId: Schema.NullOr(Schema.String) },
-) {
-  override get message(): string {
-    return this.providerInstanceId === null
-      ? "No Claude provider is enabled here, so sessions cannot be received."
-      : `${this.providerInstanceId} is not an enabled Claude provider here.`;
-  }
-}
+export { MachineClaudeUnavailableError };
 
 export class MachineUndoUnavailableError extends Schema.TaggedError<MachineUndoUnavailableError>()(
   "MachineUndoUnavailableError",
@@ -244,7 +226,6 @@ export class MachineReceiver extends Context.Service<
 >()("t3/machines/MachineReceiver") {}
 
 const MACHINE_REFS = "refs/t3/machines";
-const CLAUDE_DRIVER = "claudeAgent";
 const REPORT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_HAVES = 256;
 const TRANSFER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/;
@@ -253,7 +234,6 @@ const MAX_REPORTED_ERROR = 500;
 const decodeReport = Schema.decodeUnknownEffect(Schema.fromJsonString(MachineTransferReport));
 const encodeReport = Schema.encodeEffect(Schema.fromJsonString(MachineTransferReport));
 const encodeManifest = Schema.encodeEffect(Schema.fromJsonString(MachineTransferManifest));
-const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 
 const safetySnapshotId = (transferId: string) => `safety.${transferId}`;
 const safetyRefOf = (transferId: string) =>
@@ -295,16 +275,13 @@ const make = Effect.gen(function* () {
   const snapshots = yield* WorkingTreeSnapshot.WorkingTreeSnapshot;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const threads = yield* ThreadManagementService.ThreadManagementService;
-  const importer = yield* AgentSessionImporter.AgentSessionImporter;
-  const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const sessionThreads = yield* ClaudeSessionThreads.make;
   const { stateDir } = yield* ServerConfig.ServerConfig;
-  const sql = yield* SqlClient.SqlClient;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
   const git = yield* (yield* VcsDriverRegistry.VcsDriverRegistry).get("git").pipe(Effect.orDie);
   const homeDir = yield* HostProcess.HomeDirectory;
-  const hostEnvironment = yield* HostProcess.Environment;
   const layerScope = yield* Effect.scope;
   const rootLocks = yield* KeyedLock.make<string>();
   const registration = yield* Semaphore.make(1);
@@ -445,63 +422,6 @@ const make = Effect.gen(function* () {
     return identity;
   });
 
-  const resolveClaude = Effect.fn("MachineReceiver.resolveClaude")(function* (
-    requested: ProviderInstanceId | undefined,
-  ) {
-    const settings = yield* serverSettings.getSettings;
-    const defaultId = ProviderInstanceId.make(CLAUDE_DRIVER);
-    const configured: ReadonlyArray<[string, ProviderInstanceConfig]> = Object.entries(
-      settings.providerInstances,
-    );
-    // Like the session scanner: an unconfigured default instance is still there.
-    const instances = [
-      ...configured,
-      ...(Object.hasOwn(settings.providerInstances, defaultId)
-        ? []
-        : [
-            [defaultId, { driver: ProviderDriverKind.make(CLAUDE_DRIVER) }] satisfies [
-              string,
-              ProviderInstanceConfig,
-            ],
-          ]),
-    ]
-      .filter(
-        ([, config]) => config.driver === CLAUDE_DRIVER && resolveProviderInstanceEnabled(config),
-      )
-      .map(([instanceId, config]) => ({ instanceId: ProviderInstanceId.make(instanceId), config }));
-    const chosen =
-      requested === undefined
-        ? (instances.find(({ instanceId }) => instanceId === defaultId) ?? instances[0])
-        : instances.find(({ instanceId }) => instanceId === requested);
-    const claudeConfig =
-      chosen === undefined ? Option.none() : decodeClaudeSettings(chosen.config.config ?? {});
-    if (chosen === undefined || Option.isNone(claudeConfig)) {
-      return yield* new MachineClaudeUnavailableError({ providerInstanceId: requested ?? null });
-    }
-    const environment = yield* mergeProviderInstanceEnvironment(
-      chosen.config.environment,
-      hostEnvironment,
-    );
-    const configDir = yield* resolveClaudeHomePath(claudeConfig.value, environment).pipe(
-      Effect.provideService(Path.Path, path),
-    );
-    return { providerInstanceId: chosen.instanceId, configDir };
-  });
-
-  /** Thread ids that hold this native session here, as EventSink's import guard sees them. */
-  const nativeSessionOwners = (providerInstanceId: ProviderInstanceId, sessionId: string) =>
-    sql<{ readonly thread_id: string }>`
-      SELECT thread_id
-      FROM orchestration_v2_projection_provider_threads
-      WHERE driver = ${CLAUDE_DRIVER}
-        AND provider_instance_id = ${providerInstanceId}
-        AND thread_id IS NOT NULL
-        AND json_extract(payload_json, '$.nativeThreadRef.nativeId') = ${sessionId}
-    `.pipe(
-      NodeSqliteClient.readOnly,
-      Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
-    );
-
   const lookup = Effect.fn("MachineReceiver.lookup")(function* (
     transferId: string,
     waitMs: number,
@@ -523,10 +443,7 @@ const make = Effect.gen(function* () {
     readonly mode: MachineWorkingTreeMode;
     readonly projectId: ProjectId;
     readonly root: string;
-    readonly claude: {
-      readonly providerInstanceId: ProviderInstanceId;
-      readonly configDir: string;
-    } | null;
+    readonly claude: ClaudeInstance | null;
     readonly callerThreadId: ThreadId | undefined;
   }
 
@@ -638,33 +555,20 @@ const make = Effect.gen(function* () {
 
   type SessionReport = MachineTransferReport["sessions"][number];
 
-  const receiveSession = Effect.fn("MachineReceiver.receiveSession")(
-    function* (
-      input: JobInput,
-      claude: NonNullable<JobInput["claude"]>,
-      sessionId: string,
-      files: ReadonlyArray<string>,
-      sourceDir: string,
-      mappings: ReturnType<typeof transcriptMappings>,
-    ) {
-      const threadId = ThreadId.make(`import:${claude.providerInstanceId}:${sessionId}`);
-      const conflict = (owner: ThreadId | null, reason: string): SessionReport => ({
-        sessionId,
-        threadId: owner,
-        status: "conflict",
-        reason,
-      });
-      const ownedElsewhere = (owners: ReadonlyArray<ThreadId>) =>
-        owners.find((owner) => owner !== threadId);
-
-      const owners = yield* nativeSessionOwners(claude.providerInstanceId, sessionId);
-      const otherOwner = ownedElsewhere(owners);
-      if (otherOwner !== undefined) {
-        return conflict(otherOwner, "Another thread here already continues this session.");
-      }
-      const hadThread = owners.includes(threadId);
-
-      const placed = yield* importClaudeSession({
+  const receiveSession = Effect.fn("MachineReceiver.receiveSession")(function* (
+    input: JobInput,
+    claude: ClaudeInstance,
+    sessionId: string,
+    files: ReadonlyArray<string>,
+    sourceDir: string,
+    mappings: ReturnType<typeof transcriptMappings>,
+  ) {
+    const outcome = yield* sessionThreads.openAsThread({
+      projectId: input.projectId,
+      root: input.root,
+      claude,
+      sessionId,
+      place: importClaudeSession({
         sourceDir,
         sessionId,
         files,
@@ -675,65 +579,53 @@ const make = Effect.gen(function* () {
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
-        Effect.asSome,
+        Effect.map((placed) =>
+          Option.some({
+            projectDir: placed.projectDir,
+            changed: placed.files.some((file) => file.status !== "unchanged"),
+          }),
+        ),
         Effect.catchTags({ ClaudeSessionConflictError: () => Effect.succeedNone }),
-      );
-      if (Option.isNone(placed)) {
-        return conflict(
-          hadThread ? threadId : null,
-          "This machine holds a different transcript of this session.",
-        );
-      }
-      const changed = placed.value.files.some((file) => file.status !== "unchanged");
-      const imported = yield* importer.importSessionTranscripts({
-        projectId: input.projectId,
-        expectedWorkspaceRoot: input.root,
-        transcripts: [
-          {
-            providerInstanceId: claude.providerInstanceId,
-            filePath: path.join(placed.value.projectDir, `${sessionId}.jsonl`),
-          },
-        ],
-      });
-      if (hadThread) {
+      ),
+    });
+    switch (outcome.kind) {
+      case "imported":
         return {
           sessionId,
-          threadId,
-          status: changed ? "updated" : "existing-thread",
+          threadId: outcome.threadId,
+          status: "imported",
         } satisfies SessionReport;
-      }
-      if (imported.importedCount > 0) {
-        return { sessionId, threadId, status: "imported" } satisfies SessionReport;
-      }
-      // Another import may have claimed the session meanwhile.
-      const after = yield* nativeSessionOwners(claude.providerInstanceId, sessionId);
-      const claimedBy = ownedElsewhere(after);
-      if (claimedBy !== undefined) {
-        return conflict(claimedBy, "Another thread here already continues this session.");
-      }
-      return after.includes(threadId)
-        ? ({ sessionId, threadId, status: "existing-thread" } satisfies SessionReport)
-        : ({
-            sessionId,
-            threadId: null,
-            status: "skipped",
-            reason: "The transcript was placed, but could not be opened as a thread.",
-          } satisfies SessionReport);
-    },
-    (effect, _input, _claude, sessionId) =>
-      effect.pipe(
-        Effect.catch((error) =>
-          Effect.logWarning("machines.session-receive-failed", { sessionId, error }).pipe(
-            Effect.as<SessionReport>({
-              sessionId,
-              threadId: null,
-              status: "skipped",
-              reason: error.message.slice(0, MAX_REPORTED_ERROR),
-            }),
-          ),
-        ),
-      ),
-  );
+      case "updated":
+        return { sessionId, threadId: outcome.threadId, status: "updated" } satisfies SessionReport;
+      case "existing":
+        return {
+          sessionId,
+          threadId: outcome.threadId,
+          status: "existing-thread",
+        } satisfies SessionReport;
+      case "owned-elsewhere":
+        return {
+          sessionId,
+          threadId: outcome.threadId,
+          status: "conflict",
+          reason: "Another thread here already continues this session.",
+        } satisfies SessionReport;
+      case "transcript-conflict":
+        return {
+          sessionId,
+          threadId: outcome.threadId,
+          status: "conflict",
+          reason: "This machine holds a different transcript of this session.",
+        } satisfies SessionReport;
+      case "failed":
+        return {
+          sessionId,
+          threadId: null,
+          status: "skipped",
+          reason: outcome.reason,
+        } satisfies SessionReport;
+    }
+  });
 
   const runJob = Effect.fn("MachineReceiver.runJob")(function* (input: JobInput, job: Job) {
     yield* Effect.annotateCurrentSpan({ "machines.transfer_id": input.transferId });
@@ -966,7 +858,9 @@ const make = Effect.gen(function* () {
       }
       const root = local.find((project) => project.projectId === picked.projectId)!.root;
       const claude =
-        sessionIds.length === 0 ? null : yield* resolveClaude(input.providerInstanceId);
+        sessionIds.length === 0
+          ? null
+          : yield* sessionThreads.resolveClaude(input.providerInstanceId);
 
       const job = yield* registration.withPermits(1)(
         Effect.gen(function* () {

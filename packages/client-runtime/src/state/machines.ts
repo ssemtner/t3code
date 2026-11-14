@@ -2,6 +2,7 @@ import {
   isMachineRequestRefusedError,
   type MachineCheckoutInput,
   type MachineInventoryInput,
+  type MachineLocalImportInput,
   type MachineMarkMovedInput,
   type MachineReceiveInput,
   type MachineRequestRefusedError,
@@ -128,6 +129,16 @@ export function createMachineEnvironmentAtoms<R, E>(
           url: (urls) => urls.receive(),
           timeoutMs: WRITE_TIMEOUT_MS,
           request: ({ client, headers }) => client.receive({ headers, payload: input }),
+        }),
+    }),
+    importLocal: createEnvironmentCommand(runtime, {
+      label: "environment-data:machines:import-local",
+      execute: (input: MachineLocalImportInput) =>
+        machinesRequest({
+          method: "POST",
+          url: (urls) => urls.importLocal(),
+          timeoutMs: WRITE_TIMEOUT_MS,
+          request: ({ client, headers }) => client.importLocal({ headers, payload: input }),
         }),
     }),
     transferReport: createEnvironmentCommand(runtime, {

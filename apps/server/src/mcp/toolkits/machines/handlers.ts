@@ -1,5 +1,6 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as MachineLocalImport from "../../../machines/MachineLocalImport.ts";
 import * as MachineReceiver from "../../../machines/MachineReceiver.ts";
 import * as MachineSource from "../../../machines/MachineSource.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -72,6 +73,14 @@ export const layer = McpToolAccess.toLayer(MachinesToolkit, {
           ...(yield* callerThread),
           waitMs: WAIT_MS,
         })
+        .pipe(Effect.mapError(mapError));
+    }),
+  ),
+  t3_machines_import_local: McpToolAccess.writesEnvironment(({ projectId, sessionIds }) =>
+    Effect.gen(function* () {
+      const localImport = yield* MachineLocalImport.MachineLocalImport;
+      return yield* localImport
+        .importSessions({ projectId, sessionIds })
         .pipe(Effect.mapError(mapError));
     }),
   ),

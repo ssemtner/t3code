@@ -8,6 +8,7 @@ import * as MachinePlanApprover from "./assistant/MachinePlanApprover.ts";
 import * as MachinePlanRunner from "./assistant/MachinePlanRunner.ts";
 import * as MachinePlanStore from "./assistant/MachinePlanStore.ts";
 import * as ConfigInventory from "./ConfigInventory.ts";
+import * as MachineLocalImport from "./MachineLocalImport.ts";
 import * as MachinePeerClient from "./MachinePeerClient.ts";
 import * as MachineReceiver from "./MachineReceiver.ts";
 import * as MachineSource from "./MachineSource.ts";
@@ -17,6 +18,7 @@ import * as WorkingTreeSnapshot from "./WorkingTreeSnapshot.ts";
 const layerEngine = Layer.mergeAll(
   MachineSource.layer,
   MachineReceiver.layer,
+  MachineLocalImport.layer,
   ConfigInventory.layer,
   MachineThreadMoves.layer,
 ).pipe(Layer.provideMerge(Layer.merge(WorkingTreeSnapshot.layer, MachinePeerClient.layerHttp)));
