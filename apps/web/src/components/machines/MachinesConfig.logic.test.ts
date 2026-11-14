@@ -105,4 +105,15 @@ describe("groupDiffEntries", () => {
     ]);
     expect(groups[0]!.entries[0]!.meta).toBe("user");
   });
+
+  it("collapses long groups", () => {
+    const rules = (prefix: string, count: number) =>
+      Array.from({ length: count }, (_, index) => rule(`${prefix}${index}`));
+    const diff = diffInventories({ items: rules("a", 13) }, { items: rules("b", 12) });
+    const groups = groupDiffEntries(diff.categories[0]!, { a: "Laptop", b: "Desk" });
+    expect(groups.map((group) => [group.entries.length, group.collapsed])).toEqual([
+      [13, true],
+      [12, false],
+    ]);
+  });
 });

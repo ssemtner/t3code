@@ -116,6 +116,9 @@ export function MachinesReposSection({
   );
 }
 
+const pendingSessionsText = (count: number) =>
+  count === 1 ? "1 session not yet a thread" : `${count} sessions not yet threads`;
+
 function RepoRowView({
   row,
   ends,
@@ -159,9 +162,7 @@ function RepoRowView({
           {machineCount === 1
             ? `Only on ${row.cells[0]!.machineLabel}`
             : `${machineCount} machines`}
-          {pending > 0
-            ? ` · ${pending} ${pending === 1 ? "session" : "sessions"} not yet threads`
-            : ""}
+          {pending > 0 ? ` · ${pendingSessionsText(pending)}` : ""}
         </span>
       </button>
       {expanded ? (
@@ -291,8 +292,7 @@ function CheckoutCell({
         )}
         {cell.pendingSessions.length > 0 ? (
           <p>
-            {cell.pendingSessions.length}{" "}
-            {cell.pendingSessions.length === 1 ? "session" : "sessions"} not yet threads
+            {pendingSessionsText(cell.pendingSessions.length)}
             {cell.project.sessionsTruncated ? " (more not listed)" : ""}
           </p>
         ) : null}

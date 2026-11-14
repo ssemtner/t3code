@@ -152,6 +152,9 @@ export interface ConfigDiffGroup {
   readonly collapsed: boolean;
 }
 
+// Longer groups start collapsed; a plugin's skills can run to hundreds of rows.
+const OPEN_GROUP_LIMIT = 12;
+
 export function groupDiffEntries(
   diff: MachineConfigCategoryDiff,
   labels: { readonly a: string; readonly b: string },
@@ -166,6 +169,13 @@ export function groupDiffEntries(
     const entries = diff.entries.filter((entry) => entry.status === status);
     return entries.length === 0
       ? []
-      : [{ status, title, entries: entries.map(configDisplayEntry), collapsed: status === "same" }];
+      : [
+          {
+            status,
+            title,
+            entries: entries.map(configDisplayEntry),
+            collapsed: status === "same" || entries.length > OPEN_GROUP_LIMIT,
+          },
+        ];
   });
 }
