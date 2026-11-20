@@ -2353,7 +2353,7 @@ export const make = Effect.gen(function* () {
         snapshot.claudeFields,
         snapshot.droppedMessageCount,
       );
-      if (thread === null) return { _tag: "Skipped" };
+      if (thread === null || thread === "empty") return { _tag: "Skipped" };
       return {
         _tag: "Importable",
         thread,

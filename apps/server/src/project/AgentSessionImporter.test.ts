@@ -243,10 +243,11 @@ const makeImporter = Effect.fn(function* (
                 readSessionTranscript: (input) =>
                   Effect.succeed(
                     candidates.find(
-                      ({ source }) =>
-                        source.provider === input.source &&
-                        source.providerInstanceId === input.providerInstanceId &&
-                        source.filePath === input.filePath,
+                      (entry) =>
+                        entry._tag !== "Skipped" &&
+                        entry.source.provider === input.source &&
+                        entry.source.providerInstanceId === input.providerInstanceId &&
+                        entry.source.filePath === input.filePath,
                     ) ?? { _tag: "Skipped" },
                   ),
               })
@@ -477,7 +478,7 @@ it.effect("imports named Claude transcripts once, leaving other and owned sessio
     }
 
     expect(yield* importer.importTranscripts([named])).toEqual({
-      importedCount: 1,
+      importedCount: 0,
       skippedCount: 0,
     });
     expect(yield* events.read({ threadId }).pipe(Stream.runCollect)).toEqual(committed);
