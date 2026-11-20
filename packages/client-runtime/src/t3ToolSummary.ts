@@ -1389,6 +1389,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "machines-config": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Listed Claude config {count} time} other {Listed Claude config {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to list Claude config {count} time} other {Tried to list Claude config {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "machines-receive": {
       const count = selected.length;
       label = done

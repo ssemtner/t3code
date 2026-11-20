@@ -21,8 +21,8 @@ import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$proje
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
-import { Route as ChatMachinesRouteImport } from './routes/_chat.machines'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as ChatMachinesRouteImport } from './routes/_chat.machines'
 import { Route as ChatIssuesRouteImport } from './routes/_chat.issues'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
@@ -114,14 +114,14 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
-const ChatMachinesRoute = ChatMachinesRouteImport.update({
-  id: '/machines',
-  path: '/machines',
-  getParentRoute: () => ChatRoute,
-} as any)
 const ChatNewRoute = ChatNewRouteImport.update({
   id: '/new',
   path: '/new',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatMachinesRoute = ChatMachinesRouteImport.update({
+  id: '/machines',
+  path: '/machines',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatIssuesRoute = ChatIssuesRouteImport.update({
@@ -666,18 +666,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
-    '/_chat/machines': {
-      id: '/_chat/machines'
-      path: '/machines'
-      fullPath: '/machines'
-      preLoaderRoute: typeof ChatMachinesRouteImport
-      parentRoute: typeof ChatRoute
-    }
     '/_chat/new': {
       id: '/_chat/new'
       path: '/new'
       fullPath: '/new'
       preLoaderRoute: typeof ChatNewRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/machines': {
+      id: '/_chat/machines'
+      path: '/machines'
+      fullPath: '/machines'
+      preLoaderRoute: typeof ChatMachinesRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/issues': {

@@ -95,6 +95,12 @@ const serve = (writes: Ref.Ref<ReadonlyArray<string>>) =>
           }),
           Layer.mock(MachineConfigApply.MachineConfigApply)({
             destinationOf: (item) => Effect.succeed(`/dest/${item.id}`),
+            payloadOf: (_item, content) =>
+              Effect.succeed({
+                kind: "file" as const,
+                content: content.content,
+                sha256: content.sha256,
+              }),
             sha256Of: () => Effect.succeed(null),
             write: (input) =>
               Ref.update(writes, (all) => [...all, input.path]).pipe(

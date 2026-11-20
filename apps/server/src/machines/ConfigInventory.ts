@@ -27,6 +27,12 @@ import { claudeAccountConfigPath } from "../provider/claudeResetCredits.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "../provider/Drivers/ClaudeSkills.ts";
 import { claudeProjectDirName } from "./ClaudeTranscriptPortability.ts";
+import {
+  directoryDigestOfFiles,
+  directoryDigestOnDisk,
+  listFiles,
+  relativeKey as relativeKeyIn,
+} from "./configDirectory.ts";
 
 export class ConfigItemNotFoundError extends Schema.TaggedError<ConfigItemNotFoundError>()(
   "ConfigItemNotFoundError",
@@ -48,9 +54,19 @@ export class ConfigItemNotReadableError extends Schema.TaggedError<ConfigItemNot
 
 export class ConfigItemTooLargeError extends Schema.TaggedError<ConfigItemTooLargeError>()(
   "ConfigItemTooLargeError",
-  { id: Schema.String, path: Schema.String, sizeBytes: Schema.Number, limitBytes: Schema.Number },
+  {
+    id: Schema.String,
+    path: Schema.String,
+    sizeBytes: Schema.Number,
+    limitBytes: Schema.Number,
+    fileCount: Schema.optionalKey(Schema.Number),
+    limitFiles: Schema.optionalKey(Schema.Number),
+  },
 ) {
   override get message(): string {
+    if (this.fileCount !== undefined && this.limitFiles !== undefined) {
+      return `${this.path} has ${this.fileCount} files, over the ${this.limitFiles} file read limit.`;
+    }
     return `${this.path} is ${this.sizeBytes} bytes, over the ${this.limitBytes} byte read limit.`;
   }
 }
@@ -76,7 +92,12 @@ export class ConfigInventory extends Context.Service<
     readonly scan: (input: {
       readonly projectRoots: ReadonlyArray<string>;
     }) => Effect.Effect<MachineConfigInventory>;
-    /** Only for categories in `MACHINE_CONFIG_READABLE_CATEGORIES`; a skill reads its SKILL.md. */
+    /** One item by id, as `scan` would report it; scans only for entries of shared files. */
+    readonly findItem: (id: string) => Effect.Effect<MachineConfigItem, ConfigItemNotFoundError>;
+    /**
+     * Only for categories in `MACHINE_CONFIG_READABLE_CATEGORIES`. A user skill returns every file
+     * of its directory and the directory digest; a plugin skill returns its SKILL.md.
+     */
     readonly readItem: (
       id: string,
     ) => Effect.Effect<
@@ -90,8 +111,8 @@ export class ConfigInventory extends Context.Service<
 >()("t3/machines/ConfigInventory") {}
 
 const READ_LIMIT_BYTES = 256 * 1024;
-const WALK_MAX_DEPTH = 8;
-const WALK_MAX_FILES = 2_000;
+const SKILL_READ_LIMIT_BYTES = 5 * 1024 * 1024;
+const SKILL_READ_LIMIT_FILES = 200;
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -201,6 +222,7 @@ const make = Effect.gen(function* () {
     effect.pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(Digest.Digest, digest),
     );
 
   const sha256 = (data: Uint8Array) => digest.digestHex(Digest.sha256, data);
@@ -208,8 +230,7 @@ const make = Effect.gen(function* () {
   const isoMtime = (info: FileSystem.File.Info | undefined) =>
     info === undefined ? null : Option.getOrNull(Option.map(info.mtime, (d) => d.toISOString()));
 
-  const relativeKey = (root: string, file: string) =>
-    path.relative(root, file).split(path.sep).join("/");
+  const relativeKey = (root: string, file: string) => relativeKeyIn(path, root, file);
 
   const projectKey = (ctx: ScanContext, projectPath: string) =>
     machineProjectKey(claudeProjectDirName(projectPath), ctx.encodedHome);
@@ -263,33 +284,6 @@ const make = Effect.gen(function* () {
     return Option.isSome(value)
       ? { kind: "ok", value: value.value }
       : { kind: "problem", problem: { path: filePath, reason: "malformed" } };
-  });
-
-  // Follows symlinks (stat) and skips dot entries such as .DS_Store, which differ by machine.
-  const listFiles = Effect.fnUntraced(function* (root: string, accept: (name: string) => boolean) {
-    const files: Array<string> = [];
-    const pending: Array<{ readonly directory: string; readonly depth: number }> = [
-      { directory: root, depth: 0 },
-    ];
-    while (files.length < WALK_MAX_FILES) {
-      const next = pending.shift();
-      if (next === undefined) break;
-      const { directory, depth } = next;
-      const entries = yield* fileSystem
-        .readDirectory(directory)
-        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-      for (const entry of entries.toSorted()) {
-        if (entry.startsWith(".")) continue;
-        const entryPath = path.join(directory, entry);
-        const info = yield* fileSystem.stat(entryPath).pipe(Effect.orElseSucceed(() => undefined));
-        if (info?.type === "Directory" && depth < WALK_MAX_DEPTH) {
-          pending.push({ directory: entryPath, depth: depth + 1 });
-        } else if (info?.type === "File" && accept(entry)) {
-          files.push(entryPath);
-        }
-      }
-    }
-    return files.toSorted();
   });
 
   const isMarkdown = (name: string) => name.endsWith(".md");
@@ -472,21 +466,12 @@ const make = Effect.gen(function* () {
         modifiedAt: isoMtime(info),
       };
     }
-    const lines: Array<string> = [];
-    let sizeBytes = 0;
-    const files = yield* listFiles(candidate.directory, () => true);
-    for (const file of files) {
-      const bytes = yield* fileSystem
-        .readFile(file)
-        .pipe(Effect.orElseSucceed(() => new Uint8Array()));
-      sizeBytes += bytes.byteLength;
-      lines.push(`${relativeKey(candidate.directory, file)}\0${yield* sha256(bytes)}\n`);
-    }
+    const tree = yield* provideFileSystem(directoryDigestOnDisk(candidate.directory));
     return {
       ...candidate.draft,
-      ...(candidate.draft.category === "skill" ? { fileCount: files.length } : {}),
-      sizeBytes,
-      sha256: yield* sha256(encoder.encode(lines.join(""))),
+      ...(candidate.draft.category === "skill" ? { fileCount: tree.fileCount } : {}),
+      sizeBytes: tree.sizeBytes,
+      sha256: tree.sha256,
       modifiedAt: isoMtime(info),
     };
   });
@@ -725,18 +710,13 @@ const make = Effect.gen(function* () {
     } satisfies ScanContext;
   });
 
-  const scan: ConfigInventory["Service"]["scan"] = Effect.fn("ConfigInventory.scan")(function* ({
-    projectRoots,
-  }) {
-    const problems: Array<MachineConfigProblem> = [];
-    const items: Array<MachineConfigItem> = [];
+  const readClaudeJson = Effect.fnUntraced(function* (projectRoots: ReadonlyArray<string>) {
     const environment = yield* HostProcess.Environment;
     const customConfigDir = (environment.CLAUDE_CONFIG_DIR?.trim() ?? "") !== "";
     const claudeJsonPath = yield* claudeAccountConfigPath(
       customConfigDir ? yield* resolveClaudeHomePath({ homePath: "" }, environment) : undefined,
     );
     const claudeJson = yield* readJson(claudeJsonPath);
-    if (claudeJson.kind === "problem") problems.push(claudeJson.problem);
     const claudeJsonValue =
       claudeJson.kind === "ok" && isRecord(claudeJson.value) ? claudeJson.value : {};
     const knownProjects = isRecord(claudeJsonValue.projects) ? claudeJsonValue.projects : {};
@@ -745,6 +725,17 @@ const make = Effect.gen(function* () {
       const encoded = claudeProjectDirName(projectPath);
       if (!projectPaths.has(encoded)) projectPaths.set(encoded, projectPath);
     }
+    return { claudeJsonPath, claudeJson, claudeJsonValue, knownProjects, projectPaths };
+  });
+
+  const scan: ConfigInventory["Service"]["scan"] = Effect.fn("ConfigInventory.scan")(function* ({
+    projectRoots,
+  }) {
+    const problems: Array<MachineConfigProblem> = [];
+    const items: Array<MachineConfigItem> = [];
+    const { claudeJsonPath, claudeJson, claudeJsonValue, knownProjects, projectPaths } =
+      yield* readClaudeJson(projectRoots);
+    if (claudeJson.kind === "problem") problems.push(claudeJson.problem);
     const ctx = yield* resolveContext(projectPaths);
     const readJsonRecord = Effect.fnUntraced(function* (filePath: string) {
       const read = yield* readJson(filePath);
@@ -843,6 +834,82 @@ const make = Effect.gen(function* () {
     };
   }, provideFileSystem);
 
+  const findCandidate = Effect.fnUntraced(function* (id: string) {
+    // Memory items label their project from .claude.json, as a scan does.
+    const projectPaths = id.startsWith("memory:")
+      ? (yield* readClaudeJson([])).projectPaths
+      : new Map<string, string>();
+    const ctx = yield* resolveContext(projectPaths);
+    const candidate = (yield* fileCandidates(ctx)).find((entry) => entry.draft.id === id);
+    if (candidate === undefined) return yield* new ConfigItemNotFoundError({ id });
+    return candidate;
+  });
+
+  const findItem: ConfigInventory["Service"]["findItem"] = Effect.fn("ConfigInventory.findItem")(
+    function* (id) {
+      const category = id.slice(0, id.indexOf(":"));
+      if (!isMachineConfigCategory(category)) return yield* new ConfigItemNotFoundError({ id });
+      if (MACHINE_CONFIG_READABLE_CATEGORIES.has(category)) {
+        return yield* hashCandidate(yield* findCandidate(id));
+      }
+      const scanned = yield* scan({ projectRoots: [] });
+      const item = scanned.items.find((candidate) => candidate.id === id);
+      if (item === undefined) return yield* new ConfigItemNotFoundError({ id });
+      return item;
+    },
+    provideFileSystem,
+  );
+
+  const readSkillDirectory = Effect.fnUntraced(function* (id: string, candidate: FileCandidate) {
+    const directory = candidate.directory!;
+    const readError = (filePath: string) => (cause: unknown) =>
+      new ConfigItemReadError({ id, path: filePath, cause });
+    const paths = yield* listFiles(directory, () => true);
+    if (paths.length > SKILL_READ_LIMIT_FILES) {
+      return yield* new ConfigItemTooLargeError({
+        id,
+        path: directory,
+        sizeBytes: 0,
+        limitBytes: SKILL_READ_LIMIT_BYTES,
+        fileCount: paths.length,
+        limitFiles: SKILL_READ_LIMIT_FILES,
+      });
+    }
+    const files: Array<{ path: string; bytes: Uint8Array; executable: boolean }> = [];
+    let sizeBytes = 0;
+    for (const filePath of paths) {
+      const info = yield* fileSystem.stat(filePath).pipe(Effect.mapError(readError(filePath)));
+      sizeBytes += Number(info.size);
+      if (sizeBytes > SKILL_READ_LIMIT_BYTES) {
+        return yield* new ConfigItemTooLargeError({
+          id,
+          path: directory,
+          sizeBytes,
+          limitBytes: SKILL_READ_LIMIT_BYTES,
+        });
+      }
+      const bytes = yield* fileSystem.readFile(filePath).pipe(Effect.mapError(readError(filePath)));
+      files.push({
+        path: relativeKey(directory, filePath),
+        bytes,
+        executable: (info.mode & 0o111) !== 0,
+      });
+    }
+    const skillMd = files.find((file) => file.path === "SKILL.md");
+    return {
+      id,
+      path: candidate.path,
+      content: skillMd === undefined ? "" : new TextDecoder().decode(skillMd.bytes),
+      sizeBytes: files.reduce((total, file) => total + file.bytes.byteLength, 0),
+      sha256: yield* directoryDigestOfFiles(files),
+      files: files.map((file) => ({
+        path: file.path,
+        contentBase64: Buffer.from(file.bytes).toString("base64"),
+        executable: file.executable,
+      })),
+    } satisfies MachineConfigItemContent;
+  });
+
   const readItem: ConfigInventory["Service"]["readItem"] = Effect.fn("ConfigInventory.readItem")(
     function* (id) {
       const category = id.slice(0, id.indexOf(":"));
@@ -853,9 +920,14 @@ const make = Effect.gen(function* () {
       } else {
         return yield* new ConfigItemNotFoundError({ id });
       }
-      const ctx = yield* resolveContext();
-      const candidate = (yield* fileCandidates(ctx)).find((entry) => entry.draft.id === id);
-      if (candidate === undefined) return yield* new ConfigItemNotFoundError({ id });
+      const candidate = yield* findCandidate(id);
+      if (
+        candidate.directory !== undefined &&
+        candidate.draft.category === "skill" &&
+        candidate.draft.scope === "user"
+      ) {
+        return yield* readSkillDirectory(id, candidate);
+      }
       const filePath = candidate.path;
       const info = yield* fileSystem
         .stat(filePath)
@@ -883,7 +955,7 @@ const make = Effect.gen(function* () {
     provideFileSystem,
   );
 
-  return ConfigInventory.of({ scan, readItem });
+  return ConfigInventory.of({ scan, findItem, readItem });
 });
 
 /** Repeated entries (two matcher groups for one event) keep distinct ids: `id#2`. */

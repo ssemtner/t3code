@@ -60,6 +60,7 @@ export type T3McpToolSummaryAction =
   | "machines-survey"
   | "machines-receive"
   | "machines-import-local"
+  | "machines-config"
   | "machines-undo"
   | "machines-plan-propose"
   | "machines-plan-status"
@@ -431,6 +432,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_machines_survey: tool(
     ["Survey", "Surveying", "Surveyed", "machines, projects and sessions"],
     "machines-survey",
+  ),
+  t3_machines_config: tool(
+    ["List", "Listing", "Listed", "Claude config on a machine"],
+    "machines-config",
   ),
   t3_machines_receive: tool(
     ["Receive", "Receiving", "Received", "sessions and work from a linked machine"],

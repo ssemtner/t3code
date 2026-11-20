@@ -595,6 +595,8 @@ export default defineConfig({
           "**/{test-fixtures,*TestFixtures}.ts",
           "apps/mobile/src/features/development/**",
           "packages/client-runtime/src/rpc/**",
+          // Fork-only Machines UI ships in English.
+          "apps/web/src/components/machines/**",
         ],
         rules: { "t3code/no-untranslated-copy": "error" },
       },

@@ -144,6 +144,7 @@ it.effect("reads a config item and maps a missing one to a refusal", () => {
       missing._tag === "MachinePeerRefusedError" ? missing.code : null,
       "config_item_not_found",
     );
+    assert.match(missing.message, /no Claude config item with that id.*t3_machines_config/);
   }).pipe(
     Effect.provide(
       makeLayer(

@@ -1557,7 +1557,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:move-thread-to-machine",
       searchTerms: ["move", "machine", "transfer", "handoff", "computer"],
-      title: "Move to machine…",
+      title: gt("Move to machine…"),
       ...(reason === null ? {} : { description: reason, disabled: true }),
       icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
       run: async () => openMoveThreadDialog(threadRef),
@@ -1781,7 +1781,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:machines",
     searchTerms: ["machines", "environments", "computers", "link", "peer", "mesh", "network"],
-    title: "Open machines",
+    title: gt("Open machines"),
     icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/machines" });

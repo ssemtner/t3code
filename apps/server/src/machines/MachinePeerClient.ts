@@ -61,6 +61,12 @@ export class MachinePeerRefusedError extends Schema.TaggedError<MachinePeerRefus
   },
 ) {
   override get message(): string {
+    switch (this.code) {
+      case "config_item_not_found":
+        return "The source machine has no Claude config item with that id. Ids look like skill:user:<name> or instructions:user:CLAUDE.md; list them with t3_machines_config.";
+      case "config_item_too_large":
+        return "That Claude config item is too large to copy.";
+    }
     switch (this.status) {
       case 401:
         return "The source machine no longer accepts this link. It may have been revoked there; link it again.";

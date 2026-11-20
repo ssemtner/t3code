@@ -1,7 +1,9 @@
 import {
   CommandId,
   type EnvironmentId,
+  MachineConfigCategory,
   type MachineConfigItem,
+  type MachineConfigItemRead,
   MachinePlanCopyableCategory,
   type MachinePlan,
   type MachinePlanStep,
@@ -43,6 +45,21 @@ const RECEIVE_WAIT_MS = 45_000;
 const PEER_LIMITS = { runtimeMode: "full-access", interactionMode: "default" } as const;
 
 const isCopyable = Schema.is(MachinePlanCopyableCategory);
+const isConfigCategory = Schema.is(MachineConfigCategory);
+
+const ITEM_ID_HELP =
+  "Config item ids look like <category>:<scope>:<key>, for example skill:user:<name> or instructions:user:CLAUDE.md; list a machine's ids with t3_machines_config.";
+
+/** `<category>:<scope>:<key>` with a known category; checked before any call to the source. */
+const isConfigItemId = (itemId: string) => {
+  const [category, scope, ...key] = itemId.split(":");
+  return (
+    category !== undefined &&
+    isConfigCategory(category) &&
+    (scope ?? "") !== "" &&
+    key.join(":") !== ""
+  );
+};
 
 export class MachinePlanInvalidError extends Schema.TaggedError<MachinePlanInvalidError>()(
   "MachinePlanInvalidError",
@@ -195,6 +212,30 @@ const make = Effect.gen(function* () {
     return { identity, remoteUrl: remote?.url };
   });
 
+  /** What to write for a read item; the message names the machine when it must be updated. */
+  const payloadOf = Effect.fnUntraced(function* (read: MachineConfigItemRead, source: string) {
+    if (read.content === null) {
+      return yield* new StepFailed({ reason: `${source} did not send that item's content.` });
+    }
+    return yield* configApply.payloadOf(read.item, read.content).pipe(
+      Effect.mapError((error) =>
+        error.reason === "outdated-source"
+          ? new StepFailed({
+              reason: bounded(`Update T3 Code on ${source} to copy skill directories.`),
+            })
+          : stepFailed(error),
+      ),
+    );
+  });
+
+  const copyNote = (payload: MachineConfigApply.ConfigPayload, replaces: boolean) => {
+    const what = payload.kind === "directory" ? "folder" : "file";
+    if (replaces) return ` (replaces the ${what} there; a backup is kept)`;
+    return payload.kind === "directory"
+      ? ` (new folder of ${payload.files.length} file${payload.files.length === 1 ? "" : "s"})`
+      : " (new file)";
+  };
+
   type Resolved =
     | { readonly _tag: "Step"; readonly step: MachinePlanStep }
     | { readonly _tag: "Note"; readonly note: string };
@@ -296,6 +337,11 @@ const make = Effect.gen(function* () {
       }
       case "copy-config": {
         const input = draft.input;
+        if (!isConfigItemId(input.itemId)) {
+          return yield* invalid(
+            `Step ${draft.id}: "${input.itemId.slice(0, 120)}" is not a config item id. ${ITEM_ID_HELP}`,
+          );
+        }
         if (yield* isLocal(input.sourceEnvironmentId)) {
           return yield* invalid(`Step ${draft.id}: the source must be another machine.`);
         }
@@ -305,16 +351,16 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(fail));
         const category = read.item.category;
         if (!isCopyable(category)) return { _tag: "Note", note: noteFor(read.item, source) };
-        if (read.content === null) {
-          return yield* invalid(`Step ${draft.id}: ${source} did not send that item's content.`);
-        }
         const destinationPath = yield* configApply
           .destinationOf(read.item)
           .pipe(Effect.mapError(fail));
+        const payload = yield* payloadOf(read, source).pipe(
+          Effect.mapError((error) => invalid(`Step ${draft.id}: ${error.reason}`)),
+        );
         const destinationSha256 = yield* configApply
           .sha256Of(destinationPath)
           .pipe(Effect.mapError(fail));
-        if (destinationSha256 === read.content.sha256) {
+        if (destinationSha256 === payload.sha256) {
           return {
             _tag: "Note",
             note: `${category} "${read.item.name}" is already the same here.`,
@@ -328,11 +374,11 @@ const make = Effect.gen(function* () {
             input,
             preconditions: {
               category,
-              sourceSha256: read.content.sha256,
+              sourceSha256: payload.sha256,
               destinationPath,
               destinationSha256,
             },
-            summary: `Copy ${category} "${read.item.name}" from ${source} to ${destinationPath}${destinationSha256 === null ? " (new file)" : " (replaces the file there; a backup is kept)"}.`,
+            summary: `Copy ${category} "${read.item.name}" from ${source} to ${destinationPath}${copyNote(payload, destinationSha256 !== null)}.`,
             undoable: true,
           },
         };
@@ -496,15 +542,16 @@ const make = Effect.gen(function* () {
     const read = yield* machinePeer
       .readConfigItem(step.input.sourceEnvironmentId, step.input.itemId)
       .pipe(Effect.mapError(stepFailed));
-    if (read.content === null || read.content.sha256 !== preconditions.sourceSha256) {
+    const payload = yield* payloadOf(read, yield* machineName(step.input.sourceEnvironmentId));
+    if (payload.sha256 !== preconditions.sourceSha256) {
       return yield* new StepFailed({
-        reason: "The source file changed since the plan was proposed.",
+        reason: "The source changed since the plan was proposed.",
       });
     }
     const written = yield* configApply
       .write({
         path: preconditions.destinationPath,
-        content: read.content.content,
+        payload,
         expectedSha256: preconditions.destinationSha256,
         backupPath: store.backupPath(planId, step.id),
       })

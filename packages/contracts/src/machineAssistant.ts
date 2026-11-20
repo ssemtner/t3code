@@ -98,7 +98,7 @@ export const MachinePlanStepResult = Schema.Struct({
   message: Schema.String,
   transferId: Schema.optionalKey(TrimmedNonEmptyString),
   projectId: Schema.optionalKey(ProjectId),
-  /** For copy-config: whether the destination file existed, so undo restores or deletes. */
+  /** For copy-config: whether the destination existed, so undo restores or deletes. */
   replacedExisting: Schema.optionalKey(Schema.Boolean),
 });
 export type MachinePlanStepResult = typeof MachinePlanStepResult.Type;
@@ -124,11 +124,12 @@ export const MachinePlanStep = Schema.Union([
     ...stepFields,
     type: Schema.Literal("copy-config"),
     input: MachinePlanCopyConfigInput,
+    /** For a skill, both hashes are directory digests and `destinationPath` is its folder. */
     preconditions: Schema.Struct({
       category: MachinePlanCopyableCategory,
       sourceSha256: Schema.String,
       destinationPath: TrimmedNonEmptyString,
-      /** Null when the destination file did not exist at proposal time. */
+      /** Null when the destination did not exist at proposal time. */
       destinationSha256: Schema.NullOr(Schema.String),
     }),
   }),

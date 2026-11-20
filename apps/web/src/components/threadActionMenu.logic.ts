@@ -231,7 +231,7 @@ export function buildThreadActionMenuItems(
       : [
           {
             id: "move-to-machine" as const,
-            label: "Move to machine…",
+            label: resolve(msg("Move to machine…")),
             disabled: state.moveToMachineReason !== null,
             ...(state.moveToMachineReason === null ? {} : { detail: state.moveToMachineReason }),
           },

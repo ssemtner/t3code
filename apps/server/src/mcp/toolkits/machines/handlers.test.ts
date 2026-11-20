@@ -4,6 +4,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type MachineConfigInventory,
   type MachineTransferReport,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import * as ConfigInventory from "../../../machines/ConfigInventory.ts";
 import * as MachineLocalImport from "../../../machines/MachineLocalImport.ts";
 import * as MachineReceiver from "../../../machines/MachineReceiver.ts";
 import * as MachineSource from "../../../machines/MachineSource.ts";
@@ -38,8 +40,50 @@ const report: MachineTransferReport = {
   error: null,
 };
 
+const fileFields = {
+  path: "/home/u/.claude/x",
+  project: null,
+  sizeBytes: 10,
+  sha256: "abc",
+  modifiedAt: null,
+};
+const skill = (name: string, scope: "user" | "plugin") =>
+  ({
+    ...fileFields,
+    id: `skill:${scope}:${name}`,
+    category: "skill",
+    scope,
+    name,
+    description: null,
+    enabled: true,
+    plugin: scope === "plugin" ? "p" : null,
+    fileCount: 3,
+  }) as const;
+const inventory: MachineConfigInventory = {
+  environmentId,
+  scannedAt: "2026-11-20T00:00:00.000Z",
+  homeDir: "/home/u",
+  claudeConfigDir: "/home/u/.claude",
+  claudeVersion: null,
+  problems: [],
+  items: [
+    {
+      ...fileFields,
+      id: "instructions:user:CLAUDE.md",
+      category: "instructions",
+      scope: "user",
+      name: "CLAUDE.md",
+      importedBy: null,
+    },
+    skill("babysit-pr", "user"),
+    skill("p:review", "plugin"),
+    skill("synced", "user"),
+    { ...fileFields, id: "env:user:TOKEN", category: "env", scope: "user", name: "TOKEN" },
+  ],
+};
+
 const handle = Effect.fn("test.handle")(function* (
-  name: "t3_machines_receive" | "t3_machines_undo",
+  name: "t3_machines_receive" | "t3_machines_undo" | "t3_machines_config",
   params: object,
 ) {
   const toolkit = yield* MachinesToolkit;
@@ -75,11 +119,35 @@ const run = <A, E, R>(
             Layer.mock(MachineSource.MachineSource)({}),
             Layer.mock(MachineReceiver.MachineReceiver)(receiver),
             Layer.mock(MachineLocalImport.MachineLocalImport)({}),
+            Layer.mock(ConfigInventory.ConfigInventory)({ scan: () => Effect.succeed(inventory) }),
           ),
         ),
       ),
     ),
   );
+
+it.effect("config lists item ids with what copy-config can copy, filtered by category", () =>
+  Effect.gen(function* () {
+    const all = (yield* run({}, handle("t3_machines_config", {}))) as {
+      items: ReadonlyArray<{ id: string; copyable: boolean }>;
+    };
+    expect(all.items.map(({ id, copyable }) => [id, copyable])).toEqual([
+      ["instructions:user:CLAUDE.md", true],
+      ["skill:user:babysit-pr", true],
+      ["skill:plugin:p:review", false],
+      ["skill:user:synced", false],
+      ["env:user:TOKEN", false],
+    ]);
+    const skills = (yield* run({}, handle("t3_machines_config", { categories: ["skill"] }))) as {
+      items: ReadonlyArray<{ id: string; fileCount?: number }>;
+    };
+    expect(skills.items.map(({ id, fileCount }) => [id, fileCount])).toEqual([
+      ["skill:user:babysit-pr", 3],
+      ["skill:plugin:p:review", 3],
+      ["skill:user:synced", 3],
+    ]);
+  }),
+);
 
 it.effect("receive with only a transferId reads the report", () =>
   Effect.gen(function* () {

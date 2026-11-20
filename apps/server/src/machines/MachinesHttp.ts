@@ -112,9 +112,7 @@ const configItemRoute = HttpRouter.add(
     if (!id) return refuse(400, "invalid_request", "Bad config item id.");
     const inventory = yield* ConfigInventory.ConfigInventory;
     return yield* Effect.gen(function* () {
-      const scanned = yield* inventory.scan({ projectRoots: [] });
-      const item = scanned.items.find((candidate) => candidate.id === id);
-      if (item === undefined) return yield* new ConfigInventory.ConfigItemNotFoundError({ id });
+      const item = yield* inventory.findItem(id);
       // Only readable categories: the others can hold secrets that the metadata leaves out.
       const content = MACHINE_CONFIG_READABLE_CATEGORIES.has(item.category)
         ? yield* inventory.readItem(id)

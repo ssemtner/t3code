@@ -1,5 +1,6 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { type MachineConfigItem, OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as ConfigInventory from "../../../machines/ConfigInventory.ts";
 import * as MachineLocalImport from "../../../machines/MachineLocalImport.ts";
 import * as MachineReceiver from "../../../machines/MachineReceiver.ts";
 import * as MachineSource from "../../../machines/MachineSource.ts";
@@ -37,6 +38,24 @@ const mapError = (error: { readonly _tag: string; readonly message: string }) =>
   }
 };
 
+/** Mirrors `MachineConfigApply.destinationOf`: what a copy-config step can write. */
+const isCopyableItem = (item: MachineConfigItem) => {
+  switch (item.category) {
+    case "instructions":
+    case "rule":
+    case "agent":
+    case "command":
+    case "output-style":
+      return item.scope === "user";
+    case "skill":
+      return item.scope === "user" && item.name !== "synced";
+    case "memory":
+      return item.scope === "project";
+    default:
+      return false;
+  }
+};
+
 const callerThread = Effect.gen(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   return scope.thread === undefined ? {} : { callerThreadId: scope.thread.threadId };
@@ -47,6 +66,32 @@ export const layer = McpToolAccess.toLayer(MachinesToolkit, {
     Effect.gen(function* () {
       const source = yield* MachineSource.MachineSource;
       return yield* source.survey(input).pipe(Effect.mapError(mapError));
+    }),
+  ),
+  t3_machines_config: McpToolAccess.reads(({ categories }) =>
+    Effect.gen(function* () {
+      const inventory = yield* ConfigInventory.ConfigInventory;
+      const scanned = yield* inventory.scan({ projectRoots: [] });
+      const wanted = categories === undefined ? null : new Set(categories);
+      return {
+        homeDir: scanned.homeDir,
+        claudeConfigDir: scanned.claudeConfigDir,
+        items: scanned.items
+          .filter((item) => wanted === null || wanted.has(item.category))
+          .map((item) => ({
+            id: item.id,
+            category: item.category,
+            scope: item.scope,
+            name: item.name,
+            path: item.path,
+            project: item.project,
+            sha256: item.sha256,
+            modifiedAt: item.modifiedAt,
+            sizeBytes: item.sizeBytes,
+            ...(item.category === "skill" ? { fileCount: item.fileCount } : {}),
+            copyable: isCopyableItem(item),
+          })),
+      };
     }),
   ),
   t3_machines_receive: McpToolAccess.writesEnvironment((input) =>

@@ -318,7 +318,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
           <SidebarUtilityItem
             icon={<NetworkIcon />}
-            label="Machines"
+            label={gt("Machines")}
             onClick={handleMachinesClick}
           />
         </>

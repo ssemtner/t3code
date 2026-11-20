@@ -382,10 +382,28 @@ it.layer(
     }),
   );
 
+  it.effect("finds one item as a scan reports it", () =>
+    Effect.gen(function* () {
+      const { inMachine } = yield* makeMachine("Users/ssemtner", "Developer");
+      const inventory = yield* ConfigInventory.ConfigInventory;
+      const scanned = yield* inMachine(inventory.scan({ projectRoots: [] }));
+      for (const item of scanned.items) {
+        expect(yield* inMachine(inventory.findItem(item.id))).toEqual(item);
+      }
+      expect((yield* Effect.flip(inMachine(inventory.findItem("skill:user:absent"))))._tag).toBe(
+        "ConfigItemNotFoundError",
+      );
+    }),
+  );
+
   it.effect("reads file-backed items and refuses what it cannot serve", () =>
     Effect.gen(function* () {
       const { home, inMachine } = yield* makeMachine("Users/ssemtner", "Developer");
       yield* writeFiles(home, { ".claude/rules/huge.md": "x".repeat(256 * 1024 + 1) });
+      yield* (yield* FileSystem.FileSystem).chmod(
+        `${home}/.claude/skills/deploy/scripts/run.sh`,
+        0o755,
+      );
       const inventory = yield* ConfigInventory.ConfigInventory;
       const read = (id: string) => inMachine(inventory.readItem(id));
 
@@ -393,7 +411,27 @@ it.layer(
         path: `${home}/.claude/rules/lang/ts.md`,
         content: "---\npaths: ['**/*.ts']\n---\nno any",
       });
-      expect((yield* read("skill:user:deploy")).content).toContain("description: Ship it");
+      const skill = yield* read("skill:user:deploy");
+      expect(skill.content).toContain("description: Ship it");
+      expect(skill.files).toEqual([
+        {
+          path: "SKILL.md",
+          contentBase64: Buffer.from(
+            "---\nname: deploy\ndescription: Ship it\n---\nSteps",
+          ).toString("base64"),
+          executable: false,
+        },
+        {
+          path: "scripts/run.sh",
+          contentBase64: Buffer.from("echo deploy").toString("base64"),
+          executable: true,
+        },
+      ]);
+      const scanned = yield* inMachine(inventory.scan({ projectRoots: [] }));
+      expect(skill.sha256).toBe(
+        scanned.items.find((item) => item.id === "skill:user:deploy")?.sha256,
+      );
+      expect((yield* read("skill:plugin:demo:hello")).files).toBeUndefined();
       expect((yield* read("memory:project:~/developer-proj:topic.md")).content).toBe("remembered");
       expect((yield* read("instructions:user:~/notes/shared.md")).content).toBe("shared notes");
       expect(yield* Effect.flip(read("rule:user:huge.md"))).toMatchObject({

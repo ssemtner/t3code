@@ -60,12 +60,18 @@ const report = (transferId: string, status: MachineTransferReport["status"]) =>
     error: status === "failed" ? "source went away" : null,
   }) satisfies MachineTransferReport;
 
-const copy = (id: string, dependsOn: ReadonlyArray<string> = []): MachinePlanStepDraft => ({
+/** Copies the agent named `id` unless `itemId` names another item. */
+const copy = (
+  id: string,
+  dependsOn: ReadonlyArray<string> = [],
+  itemId = id.includes(":") ? id : `agent:user:${id}`,
+): MachinePlanStepDraft => ({
   id,
   dependsOn: [...dependsOn],
   type: "copy-config",
-  input: { sourceEnvironmentId: source, itemId: id },
+  input: { sourceEnvironmentId: source, itemId },
 });
+const shortId = (itemId: string) => itemId.replace(/^agent:user:/, "");
 
 const receive = (
   id: string,
@@ -118,6 +124,14 @@ const makeLayer = (world: World) => {
       } as object),
     } as MachineConfigItem,
   };
+  // An older source sends a skill's SKILL.md only, without its other files.
+  const oldPeerSkill = {
+    ...item("skill:user:old"),
+    category: "skill",
+    enabled: true,
+    plugin: null,
+    fileCount: 3,
+  } as MachineConfigItem;
   return MachinePlanRunner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -138,9 +152,10 @@ const makeLayer = (world: World) => {
             Effect.gen(function* () {
               const mcp = mcpItems[itemId];
               if (mcp !== undefined) return { item: mcp, content: null };
-              const content = (yield* Ref.get(world.sourceFiles)).get(itemId) ?? itemId;
+              const key = shortId(itemId);
+              const content = (yield* Ref.get(world.sourceFiles)).get(key) ?? key;
               return {
-                item: item(itemId),
+                item: itemId === oldPeerSkill.id ? oldPeerSkill : item(itemId),
                 content: {
                   id: itemId,
                   path: `/source/${itemId}`,
@@ -152,7 +167,16 @@ const makeLayer = (world: World) => {
             }),
         }),
         Layer.mock(MachineConfigApply.MachineConfigApply)({
-          destinationOf: (configItem) => Effect.succeed(`/dest/${configItem.id}`),
+          destinationOf: (configItem) => Effect.succeed(`/dest/${shortId(configItem.id)}`),
+          payloadOf: (configItem, content) =>
+            configItem.category === "skill" && content.files === undefined
+              ? Effect.fail(
+                  new MachineConfigApply.MachineConfigUnsupportedError({
+                    itemId: configItem.id,
+                    reason: "outdated-source",
+                  }),
+                )
+              : Effect.succeed({ kind: "file", content: content.content, sha256: content.sha256 }),
           sha256Of: (path) =>
             Ref.get(world.files).pipe(
               Effect.map((files) => {
@@ -168,7 +192,10 @@ const makeLayer = (world: World) => {
               }
               yield* log(`write:${input.path}`);
               yield* Ref.update(world.files, (files) =>
-                new Map(files).set(input.path, input.content),
+                new Map(files).set(
+                  input.path,
+                  input.payload.kind === "file" ? input.payload.content : "",
+                ),
               );
               return { replacedExisting: current !== undefined };
             }),
@@ -424,6 +451,30 @@ it.effect("refuses a dependency on a later or unknown step", () =>
     Effect.gen(function* () {
       const error = yield* propose([copy("a", ["b"]), copy("b")]).pipe(Effect.flip);
       expect(error.message).toBe("Step a depends on b, which is not an earlier step.");
+    }),
+  ),
+);
+
+it.effect("refuses a malformed config item id before asking the source", () =>
+  withWorld(() =>
+    Effect.gen(function* () {
+      for (const itemId of ["deploy", "skills:user:deploy", "skill:user:", "skill::deploy"]) {
+        const error = yield* propose([copy("a", [], itemId)]).pipe(Effect.flip);
+        expect(error.message).toContain(`"${itemId}" is not a config item id`);
+        expect(error.message).toContain("skill:user:<name>");
+        expect(error.message).toContain("t3_machines_config");
+      }
+    }),
+  ),
+);
+
+it.effect("asks to update a source too old to send a skill's directory", () =>
+  withWorld(() =>
+    Effect.gen(function* () {
+      const error = yield* propose([copy("s", [], "skill:user:old")]).pipe(Effect.flip);
+      expect(error.message).toBe(
+        "Step s: Update T3 Code on machine environment:source to copy skill directories.",
+      );
     }),
   ),
 );

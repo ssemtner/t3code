@@ -159,12 +159,24 @@ export const MachineConfigInventory = Schema.Struct({
 });
 export type MachineConfigInventory = typeof MachineConfigInventory.Type;
 
+/** One file of a skill directory, relative to the skill's folder with `/` separators. */
+export const MachineConfigItemFile = Schema.Struct({
+  path: Schema.String,
+  contentBase64: Schema.String,
+  executable: Schema.Boolean,
+});
+export type MachineConfigItemFile = typeof MachineConfigItemFile.Type;
+
 export const MachineConfigItemContent = Schema.Struct({
   id: Schema.String,
   path: Schema.String,
+  /** The file's text; for a skill, its SKILL.md. */
   content: Schema.String,
   sizeBytes: NonNegativeInt,
+  /** The file's sha256, or for a user skill the directory digest the inventory reports. */
   sha256: Schema.String,
+  /** Every file of a user skill's directory. Older builds leave it out. */
+  files: Schema.optionalKey(Schema.Array(MachineConfigItemFile)),
 });
 export type MachineConfigItemContent = typeof MachineConfigItemContent.Type;
 

@@ -1,4 +1,6 @@
 import {
+  MachineConfigCategory,
+  MachineConfigScope,
   MachineLocalImportInput,
   MachineLocalImportResult,
   MachineReceiveInput,
@@ -11,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
+import * as ConfigInventory from "../../../machines/ConfigInventory.ts";
 import * as MachineLocalImport from "../../../machines/MachineLocalImport.ts";
 import * as MachineReceiver from "../../../machines/MachineReceiver.ts";
 import * as MachineSource from "../../../machines/MachineSource.ts";
@@ -26,6 +29,7 @@ const shared = {
     MachineSource.MachineSource,
     MachineReceiver.MachineReceiver,
     MachineLocalImport.MachineLocalImport,
+    ConfigInventory.ConfigInventory,
   ],
 };
 const MachinesSurveyTool = Tool.make("t3_machines_survey", {
@@ -37,6 +41,37 @@ const MachinesSurveyTool = Tool.make("t3_machines_survey", {
     ...MachineSurveyInput.fields,
   }),
   success: MachineSurvey,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+const MachineConfigListing = Schema.Struct({
+  homeDir: Schema.String,
+  claudeConfigDir: Schema.String,
+  items: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      category: MachineConfigCategory,
+      scope: MachineConfigScope,
+      name: Schema.String,
+      path: Schema.String,
+      project: Schema.NullOr(Schema.String),
+      sha256: Schema.String,
+      modifiedAt: Schema.NullOr(Schema.String),
+      sizeBytes: Schema.Number,
+      fileCount: Schema.optionalKey(Schema.Number),
+      copyable: Schema.Boolean,
+    }),
+  ),
+});
+const MachinesConfigTool = Tool.make("t3_machines_config", {
+  ...shared,
+  description:
+    "Claude config on this machine (or a linked one): CLAUDE.md and its imports, rules, agents, commands, output styles, skills, project memory, MCP servers, hooks, permissions, env names and plugins. Each item has the `id` a plan's copy-config step takes (e.g. `skill:user:<name>`, `instructions:user:CLAUDE.md`), a sha256 over its content (a skill's whole directory) and whether copy-config can copy it. Call it on two machines and compare `id` and `sha256` to find what is missing or different. Read-only.",
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    categories: Schema.optionalKey(Schema.Array(MachineConfigCategory)),
+  }),
+  success: MachineConfigListing,
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
@@ -75,6 +110,7 @@ const MachinesUndoTool = Tool.make("t3_machines_undo", {
 
 export const MachinesToolkit = Toolkit.make(
   MachinesSurveyTool,
+  MachinesConfigTool,
   MachinesReceiveTool,
   MachinesImportLocalTool,
   MachinesUndoTool,

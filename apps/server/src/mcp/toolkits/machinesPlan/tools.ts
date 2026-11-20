@@ -54,7 +54,7 @@ const approvalNote =
 const ProposeTool = Tool.make("t3_machines_plan_propose", {
   ...shared,
   description:
-    "Store a plan of steps that move work to or between linked machines: receive sessions/uncommitted work, clone a project, copy one Claude config file. Nothing runs yet. The server checks every step, writes its summary, and turns MCP servers, hooks, permissions, env vars and plugins into notes for the user. Show the returned summary to the user.",
+    "Store a plan of steps that move work to or between linked machines: receive sessions/uncommitted work, clone a project, copy one Claude config item (a file, or a whole skill directory) by the `id` that t3_machines_config lists on the source machine. Nothing runs yet. The server checks every step, writes its summary, and turns MCP servers, hooks, permissions, env vars and plugins into notes for the user. Show the returned summary to the user.",
   parameters: Schema.Struct({
     title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
     steps: Schema.Array(MachinePlanStepDraft),

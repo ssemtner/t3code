@@ -132,17 +132,14 @@ const layerServices = (fixture: Effect.Success<ReturnType<typeof makeFixture>>) 
         Sqlite.layerMemory,
         ServerSecretStore.layer,
         ManagedPolicy.layerTest(),
+        // No `scan`: one item resolves without inventorying the whole machine.
         Layer.mock(ConfigInventory.ConfigInventory)({
-          scan: () =>
-            Effect.succeed({
-              environmentId: EnvironmentId.make("environment-http"),
-              scannedAt: "2026-01-01T00:00:00.000Z",
-              homeDir: "/home",
-              claudeConfigDir: "/claude",
-              claudeVersion: null,
-              items: [RULE, MCP],
-              problems: [],
-            }),
+          findItem: (id) => {
+            const item = [RULE, MCP].find((candidate) => candidate.id === id);
+            return item === undefined
+              ? Effect.fail(new ConfigInventory.ConfigItemNotFoundError({ id }))
+              : Effect.succeed(item);
+          },
           readItem: (id) => {
             readItemCalls.push(id);
             return Effect.succeed(RULE_CONTENT);
